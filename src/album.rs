@@ -6,7 +6,7 @@ use rspotify::model::album::{FullAlbum, SavedAlbum, SimplifiedAlbum};
 
 use crate::artist::Artist;
 use crate::library::Library;
-use crate::queue::Queue;
+use crate::queue::{Playable, Queue};
 use crate::spotify::Spotify;
 use crate::track::Track;
 use crate::traits::{IntoBoxedViewExt, ListItem, ViewExt};
@@ -131,14 +131,7 @@ impl fmt::Debug for Album {
 impl ListItem for Album {
     fn is_playing(&self, queue: Arc<Queue>) -> bool {
         if let Some(tracks) = self.tracks.as_ref() {
-            let playing: Vec<String> = queue
-                .queue
-                .read()
-                .unwrap()
-                .iter()
-                .filter(|t| t.id.is_some())
-                .map(|t| t.id.clone().unwrap())
-                .collect();
+            let playing: Vec<String> = queue.queue.read().unwrap().iter().map(|t| t.id()).collect();
             let ids: Vec<String> = tracks
                 .iter()
                 .filter(|t| t.id.is_some())
@@ -175,7 +168,8 @@ impl ListItem for Album {
         self.load_tracks(queue.get_spotify());
 
         if let Some(tracks) = self.tracks.as_ref() {
-            let tracks: Vec<&Track> = tracks.iter().collect();
+            let tracks: Vec<&dyn Playable> =
+                tracks.iter().map(|track| track as &dyn Playable).collect();
             let index = queue.append_next(tracks);
             queue.play(index, true, true);
         }
@@ -186,7 +180,7 @@ impl ListItem for Album {
 
         if let Some(tracks) = self.tracks.as_ref() {
             for t in tracks {
-                queue.append(&t);
+                queue.append(t as &dyn Playable);
             }
         }
     }

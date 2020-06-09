@@ -14,6 +14,7 @@ use crate::artist::Artist;
 use crate::config;
 use crate::events::EventManager;
 use crate::playlist::Playlist;
+use crate::queue::Playable;
 use crate::spotify::Spotify;
 use crate::track::Track;
 
@@ -512,13 +513,13 @@ impl Library {
         }
     }
 
-    pub fn is_saved_track(&self, track: &Track) -> bool {
+    pub fn is_saved_track(&self, playable: &dyn Playable) -> bool {
         if !*self.is_done.read().unwrap() {
             return false;
         }
 
         let tracks = self.tracks.read().unwrap();
-        tracks.iter().any(|t| t.id == track.id)
+        tracks.iter().any(|t| t.id == Some(playable.id()))
     }
 
     pub fn save_tracks(&self, tracks: Vec<&Track>, api: bool) {

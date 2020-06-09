@@ -8,7 +8,7 @@ use rspotify::model::track::{FullTrack, SavedTrack, SimplifiedTrack};
 use crate::album::Album;
 use crate::artist::Artist;
 use crate::library::Library;
-use crate::queue::Queue;
+use crate::queue::{Playable, Queue};
 use crate::traits::{ListItem, ViewExt};
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -26,6 +26,16 @@ pub struct Track {
     pub cover_url: String,
     pub url: String,
     pub added_at: Option<DateTime<Utc>>,
+}
+
+impl Playable for Track {
+    fn id(&self) -> String {
+        self.id.expect("track without id")
+    }
+
+    fn clone_boxed(&self) -> Box<dyn Playable> {
+        Box::new(self.clone())
+    }
 }
 
 impl Track {
@@ -148,7 +158,7 @@ impl fmt::Debug for Track {
 impl ListItem for Track {
     fn is_playing(&self, queue: Arc<Queue>) -> bool {
         let current = queue.get_current();
-        current.map(|t| t.id == self.id).unwrap_or(false)
+        current.map(|t| Some(t.id()) == self.id).unwrap_or(false)
     }
 
     fn as_listitem(&self) -> Box<dyn ListItem> {
@@ -173,7 +183,7 @@ impl ListItem for Track {
     }
 
     fn play(&mut self, queue: Arc<Queue>) {
-        let index = queue.append_next(vec![self]);
+        let index = queue.append_next(vec![self as &dyn Playable]);
         queue.play(index, true, false);
     }
 

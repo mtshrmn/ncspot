@@ -5,7 +5,12 @@ use rand::prelude::*;
 use strum_macros::Display;
 
 use crate::spotify::Spotify;
-use crate::track::Track;
+use crate::traits::ListItem;
+
+pub trait Playable: ListItem {
+    fn id(&self) -> String;
+    fn clone_boxed(&self) -> Box<dyn Playable>;
+}
 
 #[derive(Display, Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 pub enum RepeatSetting {
@@ -15,7 +20,7 @@ pub enum RepeatSetting {
 }
 
 pub struct Queue {
-    pub queue: Arc<RwLock<Vec<Track>>>,
+    pub queue: Arc<RwLock<Vec<Box<dyn Playable>>>>,
     random_order: RwLock<Option<Vec<usize>>>,
     current_track: RwLock<Option<usize>>,
     repeat: RwLock<RepeatSetting>,
@@ -82,9 +87,9 @@ impl Queue {
         }
     }
 
-    pub fn get_current(&self) -> Option<Track> {
+    pub fn get_current(&self) -> Option<&Box<dyn Playable>> {
         match self.get_current_index() {
-            Some(index) => Some(self.queue.read().unwrap()[index].clone()),
+            Some(index) => Some(&self.queue.read().unwrap()[index]),
             None => None,
         }
     }
@@ -93,7 +98,7 @@ impl Queue {
         *self.current_track.read().unwrap()
     }
 
-    pub fn append(&self, track: &Track) {
+    pub fn append(&self, playable: &dyn Playable) {
         let mut random_order = self.random_order.write().unwrap();
         if let Some(order) = random_order.as_mut() {
             let index = order.len().saturating_sub(1);
@@ -101,16 +106,16 @@ impl Queue {
         }
 
         let mut q = self.queue.write().unwrap();
-        q.push(track.clone());
+        q.push(playable.clone_boxed());
     }
 
-    pub fn append_next(&self, tracks: Vec<&Track>) -> usize {
+    pub fn append_next(&self, playables: Vec<&dyn Playable>) -> usize {
         let mut q = self.queue.write().unwrap();
 
         {
             let mut random_order = self.random_order.write().unwrap();
             if let Some(order) = random_order.as_mut() {
-                order.extend((q.len().saturating_sub(1))..(q.len() + tracks.len()));
+                order.extend((q.len().saturating_sub(1))..(q.len() + playables.len()));
             }
         }
 
@@ -120,8 +125,8 @@ impl Queue {
         };
 
         let mut i = first;
-        for track in tracks {
-            q.insert(i, track.clone());
+        for playable in playables {
+            q.insert(i, playable.clone_boxed());
             i += 1;
         }
 
@@ -210,8 +215,8 @@ impl Queue {
             index = rng.gen_range(0, &self.queue.read().unwrap().len());
         }
 
-        if let Some(track) = &self.queue.read().unwrap().get(index) {
-            self.spotify.load(&track);
+        if let Some(track) = self.queue.read().unwrap().get(index) {
+            self.spotify.load(track.as_ref());
             let mut current = self.current_track.write().unwrap();
             current.replace(index);
             self.spotify.play();

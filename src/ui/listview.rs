@@ -12,7 +12,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::command::{Command, GotoMode, MoveAmount, MoveMode, TargetMode};
 use crate::commands::CommandResult;
 use crate::library::Library;
-use crate::queue::Queue;
+use crate::queue::{Playable, Queue};
 use crate::track::Track;
 use crate::traits::{IntoBoxedViewExt, ListItem, ViewExt};
 use crate::ui::album::AlbumView;
@@ -146,7 +146,7 @@ impl<I: ListItem> ListView<I> {
         let content = self.content.read().unwrap();
         let any = &(*content) as &dyn std::any::Any;
         if let Some(tracks) = any.downcast_ref::<Vec<Track>>() {
-            let tracks: Vec<&Track> = tracks.iter().collect();
+            let tracks: Vec<&dyn Playable> = tracks.iter().map(|t| t as &dyn Playable).collect();
             let index = self.queue.append_next(tracks);
             self.queue.play(index + self.selected, true, false);
             true

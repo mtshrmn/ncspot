@@ -5,7 +5,7 @@ use rspotify::model::artist::{FullArtist, SimplifiedArtist};
 
 use crate::album::Album;
 use crate::library::Library;
-use crate::queue::Queue;
+use crate::queue::{Playable, Queue};
 use crate::spotify::Spotify;
 use crate::track::Track;
 use crate::traits::{IntoBoxedViewExt, ListItem, ViewExt};
@@ -120,14 +120,7 @@ impl fmt::Debug for Artist {
 impl ListItem for Artist {
     fn is_playing(&self, queue: Arc<Queue>) -> bool {
         if let Some(tracks) = self.tracks() {
-            let playing: Vec<String> = queue
-                .queue
-                .read()
-                .unwrap()
-                .iter()
-                .filter(|t| t.id.is_some())
-                .map(|t| t.id.clone().unwrap())
-                .collect();
+            let playing: Vec<String> = queue.queue.read().unwrap().iter().map(|t| t.id()).collect();
             let ids: Vec<String> = tracks
                 .iter()
                 .filter(|t| t.id.is_some())
@@ -171,6 +164,10 @@ impl ListItem for Artist {
         self.load_albums(queue.get_spotify());
 
         if let Some(tracks) = self.tracks() {
+            let tracks: Vec<&dyn Playable> = tracks
+                .iter()
+                .map(|track| track.clone() as &dyn Playable)
+                .collect();
             let index = queue.append_next(tracks);
             queue.play(index, true, true);
         }

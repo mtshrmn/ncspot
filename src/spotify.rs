@@ -53,12 +53,13 @@ use crate::artist::Artist;
 use crate::config;
 use crate::events::{Event, EventManager};
 use crate::queue;
+use crate::queue::Playable;
 use crate::track::Track;
 
 pub const VOLUME_PERCENT: u16 = ((u16::max_value() as f64) * 1.0 / 100.0) as u16;
 
 enum WorkerCommand {
-    Load(Box<Track>),
+    Load(Box<dyn Playable>),
     Play,
     Pause,
     Stop,
@@ -144,12 +145,12 @@ impl futures::Future for Worker {
                 progress = true;
                 debug!("message received!");
                 match cmd {
-                    WorkerCommand::Load(track) => {
-                        if let Some(track_id) = &track.id {
-                            let id = SpotifyId::from_base62(track_id).expect("could not parse id");
+                    WorkerCommand::Load(playable) => {
+                        if let Ok(id) = SpotifyId::from_base62(&playable.id()) {
                             self.play_task = Box::pin(self.player.load(id, false, 0).compat());
-                            info!("player loading track: {:?}", track);
+                            info!("player loading track: {:?}", id);
                         } else {
+                            error!("could not parse id");
                             self.events.send(Event::Player(PlayerEvent::FinishedTrack));
                         }
                     }
@@ -685,11 +686,12 @@ impl Spotify {
         self.api_with_retry(|api| api.current_user())
     }
 
-    pub fn load(&self, track: &Track) {
-        info!("loading track: {:?}", track);
+    pub fn load(&self, playable: &dyn Playable) {
+        info!("loading track: {:?}", playable.id());
         self.channel
-            .unbounded_send(WorkerCommand::Load(Box::new(track.clone())))
-            .unwrap();
+            .unbounded_send(WorkerCommand::Load(playable.clone_boxed()).unwrap());
+        }
+        }
     }
 
     pub fn update_status(&self, new_status: PlayerEvent) {

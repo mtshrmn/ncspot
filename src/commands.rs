@@ -270,7 +270,7 @@ impl CommandManager {
         kb.insert("<".into(), Command::Previous);
         kb.insert(">".into(), Command::Next);
         kb.insert("c".into(), Command::Clear);
-        kb.insert(" ".into(), Command::Queue);
+        kb.insert("Space".into(), Command::Queue);
         kb.insert(".".into(), Command::PlayNext);
         kb.insert("Enter".into(), Command::Play);
         kb.insert("n".into(), Command::Jump(String::from("")));
@@ -377,6 +377,7 @@ impl CommandManager {
 
     fn parse_key(key: &str) -> Event {
         match key {
+            "Space" => Event::Char(" ".chars().next().unwrap()),
             "Enter" => Event::Key(Key::Enter),
             "Tab" => Event::Key(Key::Tab),
             "Backspace" => Event::Key(Key::Backspace),

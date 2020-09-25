@@ -57,7 +57,7 @@ impl Artist {
                         }
                     }
                 }
-
+                albums.sort_by(|a, b| b.year.cmp(&a.year));
                 self.albums = Some(albums);
             }
         }

@@ -219,7 +219,7 @@ impl<I: ListItem> View for ListView<I> {
                 let center = item.display_center();
                 let right = item.display_right(self.library.clone());
 
-                let center_offset = printer.size.x / 3 * 2;
+                let center_offset = printer.size.x * 7 / 11;
 
                 // draw left string
                 printer.with_color(style, |printer| {

@@ -160,7 +160,7 @@ impl ListItem for Album {
     }
 
     fn display_center(&self) -> String {
-        "".to_string()
+        format!("{:>2} tracks", self.tracks.clone().unwrap_or_default().len())
     }
 
     fn display_right(&self, library: Arc<Library>) -> String {

@@ -378,8 +378,8 @@ impl CommandManager {
 
     fn parse_key(key: &str) -> Event {
         match key {
-            "Space" => Event::Char(" ".chars().next().unwrap()),
             "Enter" => Event::Key(Key::Enter),
+            "Space" => Event::Char(" ".chars().next().unwrap()),
             "Tab" => Event::Key(Key::Tab),
             "Backspace" => Event::Key(Key::Backspace),
             "Esc" => Event::Key(Key::Esc),

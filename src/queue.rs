@@ -1,13 +1,17 @@
 use std::cmp::Ordering;
 use std::sync::{Arc, RwLock};
 
-use gdk_pixbuf::Pixbuf;
-use libnotify::Notification;
+#[cfg(feature = "notify")]
+use {
+    gdk_pixbuf::Pixbuf,
+    libnotify::Notification,
+    tempdir::TempDir,
+    std::fs::File,
+    std::io::copy,
+};
+
 use rand::prelude::*;
-use std::fs::File;
-use std::io::copy;
 use strum_macros::Display;
-use tempdir::TempDir;
 
 use crate::playable::Playable;
 use crate::spotify::Spotify;
@@ -25,6 +29,7 @@ pub struct Queue {
     current_track: RwLock<Option<usize>>,
     repeat: RwLock<RepeatSetting>,
     spotify: Arc<Spotify>,
+    #[cfg(feature = "notify")]
     notification: Notification,
 }
 
@@ -33,6 +38,7 @@ unsafe impl Sync for Queue {}
 
 impl Queue {
     pub fn new(spotify: Arc<Spotify>) -> Queue {
+        #[cfg(feature = "notify")]
         libnotify::init("Spotify").unwrap();
 
         let q = Queue {
@@ -41,6 +47,7 @@ impl Queue {
             current_track: RwLock::new(None),
             repeat: RwLock::new(RepeatSetting::None),
             random_order: RwLock::new(None),
+            #[cfg(feature = "notify")]
             notification: Notification::new("Playback Notification", None, None),
         };
         q.set_repeat(q.spotify.repeat);
@@ -257,7 +264,7 @@ impl Queue {
             let mut current = self.current_track.write().unwrap();
             current.replace(index);
             self.spotify.update_track();
-            if self.spotify.cfg.notify.unwrap_or(false) {
+            if cfg!(feature = "notify") {
                 self.notification
                     .update(&track.title()[..], &track.artist()[..], None)
                     .unwrap();

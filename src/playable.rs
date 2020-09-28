@@ -36,6 +36,7 @@ impl Playable {
         }
     }
 
+    #[cfg(feature = "notify")]
     pub fn cover_url_str(&self) -> String {
         match self.cover_url() {
             Some(cover) => cover.clone(),
@@ -64,6 +65,7 @@ impl Playable {
         }
     }
 
+    #[cfg(feature = "notify")]
     pub fn title(&self) -> String {
         match self {
             Playable::Track(track) => track.title.clone(),
@@ -71,6 +73,7 @@ impl Playable {
         }
     }
 
+    #[cfg(feature = "notify")]
     pub fn artist(&self) -> String {
         match self {
             Playable::Track(track) => track.artists.clone().join(", "),

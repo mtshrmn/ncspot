@@ -264,7 +264,8 @@ impl Queue {
             let mut current = self.current_track.write().unwrap();
             current.replace(index);
             self.spotify.update_track();
-            if cfg!(feature = "notify") {
+            #[cfg(feature = "notify")]
+            {
                 self.notification
                     .update(&track.title()[..], &track.artist()[..], None)
                     .unwrap();

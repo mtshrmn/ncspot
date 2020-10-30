@@ -1,3 +1,6 @@
+extern crate dbus;
+extern crate dbus_tree;
+
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc};
@@ -6,8 +9,8 @@ use std::time::Duration;
 use dbus::arg::{RefArg, Variant};
 use dbus::ffidisp::stdintf::org_freedesktop_dbus::PropertiesPropertiesChanged;
 use dbus::message::SignalArgs;
-use dbus::tree::{Access, Factory};
-use dbus::Path;
+use dbus::strings::Path;
+use dbus_tree::{Access, Factory};
 
 use crate::album::Album;
 use crate::episode::Episode;
@@ -65,7 +68,7 @@ fn get_metadata(playable: Option<Playable>) -> Metadata {
         Variant(Box::new(
             playable
                 .and_then(|p| p.track())
-                .map(|t| t.album)
+                .map(|t| t.album.unwrap_or_default())
                 .unwrap_or_default(),
         )),
     );

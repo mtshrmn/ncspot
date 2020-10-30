@@ -32,6 +32,7 @@ pub struct CommandManager {
     spotify: Arc<Spotify>,
     queue: Arc<Queue>,
     library: Arc<Library>,
+    config: Arc<Config>,
 }
 
 impl CommandManager {
@@ -39,18 +40,21 @@ impl CommandManager {
         spotify: Arc<Spotify>,
         queue: Arc<Queue>,
         library: Arc<Library>,
-        config: &Config,
+        config: Arc<Config>,
     ) -> CommandManager {
+        let bindings = RefCell::new(Self::get_bindings(config.clone()));
         CommandManager {
             aliases: HashMap::new(),
-            bindings: RefCell::new(Self::get_bindings(config)),
+            bindings,
             spotify,
             queue,
             library,
+            config,
         }
     }
 
-    pub fn get_bindings(config: &Config) -> HashMap<String, Command> {
+    pub fn get_bindings(config: Arc<Config>) -> HashMap<String, Command> {
+        let config = config.values();
         let mut kb = if config.default_keybindings.unwrap_or(true) {
             Self::default_keybindings()
         } else {
@@ -144,13 +148,19 @@ impl CommandManager {
                 }
                 Ok(None)
             }
-            Command::VolumeUp => {
-                let volume = self.spotify.volume().saturating_add(VOLUME_PERCENT);
+            Command::VolumeUp(amount) => {
+                let volume = self
+                    .spotify
+                    .volume()
+                    .saturating_add(VOLUME_PERCENT * amount);
                 self.spotify.set_volume(volume);
                 Ok(None)
             }
-            Command::VolumeDown => {
-                let volume = self.spotify.volume().saturating_sub(VOLUME_PERCENT);
+            Command::VolumeDown(amount) => {
+                let volume = self
+                    .spotify
+                    .volume()
+                    .saturating_sub(VOLUME_PERCENT * amount);
                 debug!("vol {}", volume);
                 self.spotify.set_volume(volume);
                 Ok(None)
@@ -161,16 +171,24 @@ impl CommandManager {
                 Ok(None)
             }
             Command::ReloadConfig => {
-                let cfg = crate::config::load()?;
+                self.config.reload();
 
                 // update theme
-                let theme = crate::theme::load(&cfg);
+                let theme = self.config.build_theme();
                 s.set_theme(theme);
 
                 // update bindings
                 self.unregister_keybindings(s);
-                self.bindings.replace(Self::get_bindings(&cfg));
+                self.bindings
+                    .replace(Self::get_bindings(self.config.clone()));
                 self.register_keybindings(s);
+                Ok(None)
+            }
+            Command::NewPlaylist(name) => {
+                match self.spotify.create_playlist(name, None, None) {
+                    Some(_) => self.library.update_library(),
+                    None => error!("could not create playlist {}", name),
+                }
                 Ok(None)
             }
             Command::Search(_)
@@ -184,6 +202,7 @@ impl CommandManager {
             | Command::Delete
             | Command::Back
             | Command::Open(_)
+            | Command::Insert(_)
             | Command::Goto(_) => Ok(None),
             _ => Err("Unknown Command".into()),
         }
@@ -288,8 +307,11 @@ impl CommandManager {
             "Shift+b".into(),
             Command::Seek(SeekDirection::Relative(-10000)),
         );
-        kb.insert("+".into(), Command::VolumeUp);
-        kb.insert("-".into(), Command::VolumeDown);
+        kb.insert("+".into(), Command::VolumeUp(1));
+        kb.insert("]".into(), Command::VolumeUp(5));
+        kb.insert("-".into(), Command::VolumeDown(1));
+        kb.insert("[".into(), Command::VolumeDown(5));
+
         kb.insert("r".into(), Command::Repeat(None));
         kb.insert("z".into(), Command::Shuffle(None));
         kb.insert("x".into(), Command::Share(TargetMode::Current));
@@ -372,6 +394,7 @@ impl CommandManager {
 
         kb.insert("Shift+Up".into(), Command::Shift(ShiftMode::Up, None));
         kb.insert("Shift+Down".into(), Command::Shift(ShiftMode::Down, None));
+        kb.insert("Ctrl+v".into(), Command::Insert(None));
 
         kb
     }

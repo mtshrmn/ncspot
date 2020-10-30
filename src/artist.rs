@@ -148,13 +148,9 @@ impl ListItem for Artist {
         format!("{}", self)
     }
 
-    fn display_center(&self) -> String {
-        "".to_string()
-    }
-
     fn display_right(&self, library: Arc<Library>) -> String {
         let followed = if library.is_followed_artist(self) {
-            if library.use_nerdfont {
+            if library.cfg.values().use_nerdfont.unwrap_or(false) {
                 "\u{f62b} "
             } else {
                 "✓ "

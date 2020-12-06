@@ -13,7 +13,6 @@ use {
 use rand::prelude::*;
 use strum_macros::Display;
 
-use crate::config::Config;
 use crate::playable::Playable;
 use crate::spotify::Spotify;
 
@@ -30,7 +29,6 @@ pub struct Queue {
     current_track: RwLock<Option<usize>>,
     repeat: RwLock<RepeatSetting>,
     spotify: Arc<Spotify>,
-    cfg: Arc<Config>,
     #[cfg(feature = "notify")]
     notification: Notification,
 }
@@ -39,7 +37,7 @@ unsafe impl Send for Queue {}
 unsafe impl Sync for Queue {}
 
 impl Queue {
-    pub fn new(spotify: Arc<Spotify>, cfg: Arc<Config>) -> Queue {
+    pub fn new(spotify: Arc<Spotify>) -> Queue {
         #[cfg(feature = "notify")]
         libnotify::init("Spotify").unwrap();
 
@@ -49,7 +47,6 @@ impl Queue {
             current_track: RwLock::new(None),
             repeat: RwLock::new(RepeatSetting::None),
             random_order: RwLock::new(None),
-            cfg,
             #[cfg(feature = "notify")]
             notification: Notification::new("Playback Notification", None, None),
         };

@@ -19,6 +19,7 @@ pub struct Playlist {
     pub snapshot_id: String,
     pub num_tracks: usize,
     pub tracks: Option<Vec<Track>>,
+    pub collaborative: bool
 }
 
 impl Playlist {
@@ -37,7 +38,9 @@ impl Playlist {
         while let Some(ref tracks) = tracks_result.clone() {
             for listtrack in &tracks.items {
                 if let Some(track) = &listtrack.track {
-                    collected_tracks.push(track.into());
+                    let mut t: Track = track.into();
+                    t.added_at = Some(listtrack.added_at);
+                    collected_tracks.push(t);
                 }
             }
             debug!("got {} tracks", tracks.items.len());
@@ -126,6 +129,7 @@ impl From<&SimplifiedPlaylist> for Playlist {
             snapshot_id: list.snapshot_id.clone(),
             num_tracks,
             tracks: None,
+            collaborative: list.collaborative,
         }
     }
 }
@@ -139,6 +143,7 @@ impl From<&FullPlaylist> for Playlist {
             snapshot_id: list.snapshot_id.clone(),
             num_tracks: list.tracks.total as usize,
             tracks: None,
+            collaborative: list.collaborative
         }
     }
 }

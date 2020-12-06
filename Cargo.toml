@@ -42,8 +42,8 @@ rand = "0.7"
 webbrowser = "0.5"
 clipboard = { version = "0.5", optional = true }
 url = "1.7"
-strum = "0.19.5"
-strum_macros = "0.19.4"
+strum = "0.20.0"
+strum_macros = "0.20.1"
 tempdir = { version = "0.3.7", optional = true }
 gdk-pixbuf = { version = "0.3.0", optional = true }
 libc = "0.2"

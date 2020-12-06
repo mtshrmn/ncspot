@@ -9,6 +9,7 @@ use crate::library::Library;
 use crate::queue::Queue;
 use crate::track::Track;
 use crate::traits::{ListItem, ViewExt};
+use crate::playable::Playable;
 use crate::ui::layout::Layout;
 use crate::ui::modal::Modal;
 use crate::{
@@ -29,6 +30,7 @@ enum ContextMenuAction {
     ShareUrl(String),
     AddToPlaylist(Box<Track>),
     ShowRecommentations(Box<dyn ListItem>),
+    ToggleTrackSavedStatus(Box<Track>),
 }
 
 impl ContextMenu {
@@ -38,9 +40,12 @@ impl ContextMenu {
         track: Track,
     ) -> Modal<Dialog> {
         let mut list_select: SelectView<Playlist> = SelectView::new().autojump();
+        let current_user_id = library.user_id.as_ref().unwrap();
 
         for list in library.items().iter() {
-            list_select.add_item(list.name.clone(), list.clone());
+            if current_user_id == &list.owner_id || list.collaborative {
+                list_select.add_item(list.name.clone(), list.clone());
+            }
         }
 
         list_select.set_on_submit(move |s, selected| {
@@ -67,10 +72,8 @@ impl ContextMenu {
 
                 let modal = Modal::new(already_added_dialog);
                 s.add_layer(modal);
-
-                return;
             } else {
-                playlist.append_tracks(&[track.clone()], spotify, library);
+                playlist.append_tracks(&[track], spotify, library);
                 s.pop_layer();
             }
         });
@@ -109,8 +112,15 @@ impl ContextMenu {
             );
             content.add_item(
                 "Similar tracks",
-                ContextMenuAction::ShowRecommentations(Box::new(t)),
+                ContextMenuAction::ShowRecommentations(Box::new(t.clone())),
             );
+            content.add_item(
+                match library.is_saved_track(&Playable::Track(t.clone())) {
+                    true => "Unsave track",
+                    false => "Save track",
+                },
+                ContextMenuAction::ToggleTrackSavedStatus(Box::new(t.clone())),
+            )
         }
 
         // open detail view of artist/album
@@ -140,6 +150,10 @@ impl ContextMenu {
                     if let Some(view) = item.open_recommentations(queue, library) {
                         s.call_on_name("main", move |v: &mut Layout| v.push_view(view));
                     }
+                }
+                ContextMenuAction::ToggleTrackSavedStatus(track) => {
+                    let mut track: Track = *track.clone();
+                    track.toggle_saved(library);
                 }
             }
         });

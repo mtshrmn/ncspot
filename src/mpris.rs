@@ -19,7 +19,7 @@ use crate::playable::Playable;
 use crate::playlist::Playlist;
 use crate::queue::{Queue, RepeatSetting};
 use crate::show::Show;
-use crate::spotify::{PlayerEvent, Spotify, URIType};
+use crate::spotify::{PlayerEvent, Spotify, URIType, VOLUME_PERCENT};
 use crate::track::Track;
 use crate::traits::ListItem;
 use regex::Regex;
@@ -43,7 +43,12 @@ fn get_metadata(playable: Option<Playable>) -> Metadata {
 
     hm.insert(
         "mpris:trackid".to_string(),
-        Variant(Box::new(playable.map(|t| t.uri()).unwrap_or_default())),
+        Variant(Box::new(Path::from(format!(
+            "/org/ncspot/{}",
+            playable
+                .map(|t| t.uri().replace(':', "/"))
+                .unwrap_or_else(|| String::from("0"))
+        )))),
     );
     hm.insert(
         "mpris:length".to_string(),
@@ -264,13 +269,27 @@ fn run_dbus_server(
             })
     };
 
-    let property_volume = f
-        .property::<f64, _>("Volume", ())
-        .access(Access::Read)
-        .on_get(|iter, _| {
-            iter.append(1.0);
-            Ok(())
-        });
+    let property_volume = {
+        let spotify1 = spotify.clone();
+        let spotify2 = spotify.clone();
+        let event = ev.clone();
+        f.property::<f64, _>("Volume", ())
+            .access(Access::ReadWrite)
+            .on_get(move |i, _| {
+                i.append(spotify1.volume() as f64 / 65535_f64);
+                Ok(())
+            })
+            .on_set(move |i, _| {
+                let cur = spotify2.volume() as f64 / 65535_f64;
+                let req = i.get::<f64>().unwrap_or(cur);
+                if req >= 0.0 && req <= 1.0 {
+                    let vol = (VOLUME_PERCENT as f64) * req * 100.0;
+                    spotify2.set_volume(vol as u16);
+                }
+                event.trigger();
+                Ok(())
+            })
+    };
 
     let property_rate = f
         .property::<f64, _>("Rate", ())

@@ -12,7 +12,7 @@ use crate::library::Library;
 use crate::playable::Playable;
 use crate::queue::Queue;
 use crate::traits::{IntoBoxedViewExt, ListItem, ViewExt};
-use crate::ui::listview::ListView;
+use crate::ui::recommendations::RecommendationsView;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Track {
@@ -266,7 +266,7 @@ impl ListItem for Track {
         };
 
         recommendations.map(|tracks| {
-            ListView::new(
+            RecommendationsView::new(
                 Arc::new(RwLock::new(tracks)),
                 queue.clone(),
                 library.clone(),

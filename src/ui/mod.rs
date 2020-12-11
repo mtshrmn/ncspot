@@ -9,6 +9,7 @@ pub mod modal;
 pub mod playlist;
 pub mod playlists;
 pub mod queue;
+pub mod recommendations;
 pub mod search;
 pub mod show;
 pub mod statusbar;

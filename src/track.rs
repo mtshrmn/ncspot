@@ -253,13 +253,15 @@ impl ListItem for Track {
             spotify
                 .recommentations(None, None, Some(vec![id.clone()]))
                 .map(|r| r.tracks)
-                .map(|tracks| tracks.par_iter()
-                     .filter_map(|track| {
-                         match track.id.as_ref() {
+                .map(|tracks| {
+                    tracks
+                        .par_iter()
+                        .filter_map(|track| match track.id.as_ref() {
                             Some(id) => spotify.track(id),
                             None => None,
-                         }
-                     }).collect())
+                        })
+                        .collect()
+                })
                 .map(|tracks: Vec<FullTrack>| tracks.iter().map(Track::from).collect())
         } else {
             None

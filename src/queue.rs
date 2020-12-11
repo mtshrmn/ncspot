@@ -2,13 +2,7 @@ use std::cmp::Ordering;
 use std::sync::{Arc, RwLock};
 
 #[cfg(feature = "notify")]
-use {
-    gdk_pixbuf::Pixbuf,
-    libnotify::Notification,
-    tempdir::TempDir,
-    std::fs::File,
-    std::io::copy,
-};
+use {gdk_pixbuf::Pixbuf, libnotify::Notification, std::fs::File, std::io::copy, tempdir::TempDir};
 
 use rand::prelude::*;
 use strum_macros::Display;

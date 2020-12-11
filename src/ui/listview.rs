@@ -287,7 +287,6 @@ impl<I: ListItem> View for ListView<I> {
                 let right = item.display_right(self.library.clone());
                 let draw_center = !center.is_empty();
 
-
                 // draw left string
                 printer.with_color(style, |printer| {
                     printer.print_hline((0, 0), printer.size.x, " ");

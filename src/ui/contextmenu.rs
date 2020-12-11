@@ -6,10 +6,10 @@ use cursive::Cursive;
 
 use crate::commands::CommandResult;
 use crate::library::Library;
+use crate::playable::Playable;
 use crate::queue::Queue;
 use crate::track::Track;
 use crate::traits::{ListItem, ViewExt};
-use crate::playable::Playable;
 use crate::ui::layout::Layout;
 use crate::ui::modal::Modal;
 use crate::{

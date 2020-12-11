@@ -79,7 +79,7 @@ impl View for StatusBar {
         } else {
             match self.spotify.get_current_status() {
                 PlayerEvent::Playing => "▮▮",
-                PlayerEvent::Paused => "▶ ", 
+                PlayerEvent::Paused => "▶ ",
                 PlayerEvent::Stopped | PlayerEvent::FinishedTrack => "◼ ",
             }
         }

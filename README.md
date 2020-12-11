@@ -8,3 +8,4 @@ Read the upstream readme for the entire documentation
 
 * Notification has the album cover art
 * Play and pause icons are reversed
+* Simmilar tracks have album name

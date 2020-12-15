@@ -6,10 +6,11 @@ use cursive::Cursive;
 use crate::command::Command;
 use crate::commands::CommandResult;
 use crate::library::Library;
+use crate::playlist::PlaylistType;
 use crate::queue::Queue;
 use crate::traits::ViewExt;
 use crate::ui::listview::ListView;
-use crate::ui::playlists::PlaylistsView;
+use crate::ui::playlists::{PlaylistsView};
 use crate::ui::tabview::TabView;
 
 pub struct LibraryView {
@@ -37,12 +38,17 @@ impl LibraryView {
             .tab(
                 "playlists",
                 "Playlists",
-                PlaylistsView::new(queue.clone(), library.clone()),
+                PlaylistsView::new(PlaylistType::Library, queue.clone(), library.clone()),
             )
             .tab(
                 "podcasts",
                 "Podcasts",
-                ListView::new(library.shows.clone(), queue, library.clone()),
+                ListView::new(library.shows.clone(), queue.clone(), library.clone()),
+            )
+            .tab(
+                "foru",
+                "Made for You",
+                PlaylistsView::new(PlaylistType::ForYou, queue, library.clone()),
             );
 
         Self { tabs }

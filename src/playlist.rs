@@ -11,6 +11,11 @@ use crate::track::Track;
 use crate::traits::{IntoBoxedViewExt, ListItem, ViewExt};
 use crate::ui::playlist::PlaylistView;
 
+pub enum PlaylistType {
+    Library,
+    ForYou,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Playlist {
     pub id: String,

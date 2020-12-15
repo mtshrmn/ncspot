@@ -50,6 +50,9 @@ gdk-pixbuf = { version = "0.3.0", optional = true }
 libc = "0.2"
 regex = "1"
 
+[patch.crates-io]
+rspotify = { path = "../../rspotify" }
+
 [dependencies.cursive]
 version = "0.15"
 default-features = false

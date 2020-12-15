@@ -21,7 +21,8 @@ use rspotify::model::playlist::{FullPlaylist, PlaylistTrack, SimplifiedPlaylist}
 use rspotify::model::search::SearchResult;
 use rspotify::model::track::{FullTrack, SavedTrack, SimplifiedTrack};
 use rspotify::model::user::PrivateUser;
-use rspotify::senum::SearchType;
+use rspotify::model::madeforyou::MadeForXHub;
+use rspotify::senum::{SearchType, Country};
 
 use serde_json::{json, Map};
 
@@ -707,6 +708,18 @@ impl Spotify {
                 100,
                 None,
                 &Map::new(),
+            )
+        })
+    }
+
+    pub fn made_for_you(&self) -> Option<MadeForXHub> {
+        self.api_with_retry(|api| {
+            api.made_for_x(
+                None,
+                20,
+                10,
+                Some(Country::Israel),
+                Some("en".to_string()),
             )
         })
     }

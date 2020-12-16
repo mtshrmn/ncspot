@@ -60,6 +60,7 @@ use crate::events::{Event, EventManager};
 use crate::playable::Playable;
 use crate::queue;
 use crate::track::Track;
+use crate::token::fetch_illegal_access_token;
 use rspotify::model::recommend::Recommendations;
 use rspotify::model::show::{FullEpisode, FullShow, Show, SimplifiedEpisode};
 
@@ -521,7 +522,11 @@ impl Spotify {
 
         let (token_tx, token_rx) = oneshot::channel();
         self.send_worker(WorkerCommand::RequestToken(token_tx));
-        let token = futures::executor::block_on(token_rx).unwrap();
+        let mut token = futures::executor::block_on(token_rx).unwrap();
+
+        info!("attempting to fetch illegal access token");
+        token.access_token = fetch_illegal_access_token().unwrap().access_token;
+        info!("illegal acces token fetched successfully");
 
         // update token used by web api calls
         self.api.write().expect("can't writelock api").access_token = Some(token.access_token);

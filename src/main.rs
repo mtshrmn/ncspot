@@ -65,6 +65,7 @@ mod queue;
 mod show;
 mod spotify;
 mod theme;
+mod token;
 mod track;
 mod traits;
 mod ui;

@@ -11,8 +11,12 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v2
+        with:
+          submodules: true
       - name: Install dependencies
         run: brew install portaudio pkg-config libnotify
+      - name: Patch rspotify library
+        run: cd rspotify && git apply ../rspotify.patch
       - name: Build
         run: cargo build --verbose --no-default-features --features portaudio_backend,cursive/pancurses-backend
 
@@ -20,9 +24,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+        with:
+          submodules: true
       - name: Update APT package lists
         run: sudo apt update
       - name: Install dependencies
         run: sudo apt install libpulse-dev libdbus-1-dev libncursesw5-dev  libxcb-shape0-dev libxcb-xfixes0-dev libnotify-dev
+      - name: Patch rspotify library
+        run: cd rspotify && git apply ../rspotify.patch
       - name: Build
         run: cargo build --verbose

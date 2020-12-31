@@ -172,6 +172,23 @@ impl<I: ListItem> ListView<I> {
         self.move_focus_to(max(new, 0) as usize);
     }
 
+    fn queue_all_after(&self, pos: &usize) -> bool {
+        let content = self.content.read().unwrap();
+        let any = &(*content) as &dyn std::any::Any;
+        if let Some(tracks) = any.downcast_ref::<Vec<Track>>() {
+            let tracks: Vec<Playable> = tracks
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| index >= pos)
+                .map(|(_, track)| Playable::Track(track.clone()))
+                .collect();
+            self.queue.append_next(tracks);
+            true
+        } else {
+            false
+        }
+    }
+
     fn attempt_play_all_tracks(&self) -> bool {
         let content = self.content.read().unwrap();
         let any = &(*content) as &dyn std::any::Any;
@@ -464,6 +481,10 @@ impl<I: ListItem + Clone> ViewExt for ListView<I> {
 
                 return Ok(CommandResult::Consumed(None));
             }
+            Command::QueueAll => {
+                let index = self.get_selected_index();
+                self.queue_all_after(&index);
+            },
             Command::Save => {
                 let mut item = {
                     let content = self.content.read().unwrap();

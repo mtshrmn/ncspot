@@ -198,6 +198,7 @@ impl CommandManager {
             | Command::Play
             | Command::PlayNext
             | Command::Queue
+            | Command::QueueAll
             | Command::Save
             | Command::Delete
             | Command::Back

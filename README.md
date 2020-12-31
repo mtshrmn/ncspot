@@ -11,6 +11,11 @@ Read the upstream readme for the entire documentation
 * Simmilar tracks have album name
 * Made for you tab
 
+--- 
+
+##### custom commands:
+`:queueall` - queue all songs proceeding selection (and included).
+
 ### Installation guide
 1. compiling the program:
 ```sh

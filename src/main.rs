@@ -62,6 +62,7 @@ mod library;
 mod playable;
 mod playlist;
 mod queue;
+mod sharing;
 mod show;
 mod spotify;
 mod theme;
@@ -226,7 +227,7 @@ fn main() {
         cfg.clone(),
     ));
 
-    let queue = Arc::new(queue::Queue::new(spotify.clone()));
+    let queue = Arc::new(queue::Queue::new(spotify.clone(), cfg.clone()));
 
     #[cfg(feature = "mpris")]
     let mpris_manager = Arc::new(mpris::MprisManager::new(

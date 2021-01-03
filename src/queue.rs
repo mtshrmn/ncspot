@@ -7,6 +7,7 @@ use {gdk_pixbuf::Pixbuf, libnotify::Notification, std::fs::File, std::io::copy, 
 use rand::prelude::*;
 use strum_macros::Display;
 
+use crate::config::Config;
 use crate::playable::Playable;
 use crate::spotify::Spotify;
 
@@ -23,6 +24,7 @@ pub struct Queue {
     current_track: RwLock<Option<usize>>,
     repeat: RwLock<RepeatSetting>,
     spotify: Arc<Spotify>,
+    cfg: Arc<Config>,
     #[cfg(feature = "notify")]
     notification: Notification,
 }
@@ -31,7 +33,7 @@ unsafe impl Send for Queue {}
 unsafe impl Sync for Queue {}
 
 impl Queue {
-    pub fn new(spotify: Arc<Spotify>) -> Queue {
+    pub fn new(spotify: Arc<Spotify>, cfg: Arc<Config>) -> Queue {
         #[cfg(feature = "notify")]
         libnotify::init("Spotify").unwrap();
 
@@ -43,6 +45,7 @@ impl Queue {
             random_order: RwLock::new(None),
             #[cfg(feature = "notify")]
             notification: Notification::new("Playback Notification", None, None),
+            cfg,
         };
         q.set_repeat(q.spotify.repeat);
         q.set_shuffle(q.spotify.shuffle);
@@ -112,10 +115,9 @@ impl Queue {
             if let Some(order) = random_order.as_mut() {
                 let next_i = order.iter().position(|&i| i == index).unwrap();
                 // shift everything after the insertion in order
-                let size = order.len();
-                for i in 0..size {
-                    if order[i] > index {
-                        order[i] += 1;
+                for item in order.iter_mut() {
+                    if *item > index {
+                        *item += 1;
                     }
                 }
                 // finally, add the next track index
@@ -294,10 +296,12 @@ impl Queue {
                     .unwrap();
 
                 self.notification.set_image_from_pixbuf(&pixbuf);
-                let _ = self
-                    .notification
-                    .show()
-                    .map_err(|_| "Something went wrong".to_string());
+                if self.cfg.values().notify.unwrap_or(false) {
+                    let _ = self
+                        .notification
+                        .show()
+                        .map_err(|_| "Something went wrong".to_string());
+                }
             }
         }
 

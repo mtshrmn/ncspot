@@ -2,7 +2,6 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 
 use chrono::{DateTime, Utc};
-use rayon::prelude::*;
 use rspotify::model::album::FullAlbum;
 use rspotify::model::track::{FullTrack, SavedTrack, SimplifiedTrack};
 
@@ -12,7 +11,7 @@ use crate::library::Library;
 use crate::playable::Playable;
 use crate::queue::Queue;
 use crate::traits::{IntoBoxedViewExt, ListItem, ViewExt};
-use crate::ui::recommendations::RecommendationsView;
+use crate::ui::listview::ListView;
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Track {
@@ -253,26 +252,22 @@ impl ListItem for Track {
             spotify
                 .recommentations(None, None, Some(vec![id.clone()]))
                 .map(|r| r.tracks)
-                .map(|tracks| {
-                    tracks
-                        .par_iter()
-                        .filter_map(|track| match track.id.as_ref() {
-                            Some(id) => spotify.track(id),
-                            None => None,
-                        })
-                        .collect()
-                })
-                .map(|tracks: Vec<FullTrack>| tracks.iter().map(Track::from).collect())
+                .map(|tracks| tracks.iter().map(Track::from).collect())
         } else {
             None
         };
 
         recommendations.map(|tracks| {
-            RecommendationsView::new(
+            ListView::new(
                 Arc::new(RwLock::new(tracks)),
                 queue.clone(),
                 library.clone(),
             )
+            .set_title(format!(
+                "Similar to \"{} - {}\"",
+                self.artists.join(", "),
+                self.title
+            ))
             .as_boxed_view_ext()
         })
     }

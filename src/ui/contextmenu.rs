@@ -8,6 +8,8 @@ use crate::commands::CommandResult;
 use crate::library::Library;
 use crate::playable::Playable;
 use crate::queue::Queue;
+#[cfg(feature = "share_clipboard")]
+use crate::sharing::write_share;
 use crate::track::Track;
 use crate::traits::{ListItem, ViewExt};
 use crate::ui::layout::Layout;
@@ -17,11 +19,13 @@ use crate::{
     playlist::Playlist,
     spotify::Spotify,
 };
-#[cfg(feature = "share_clipboard")]
-use clipboard::{ClipboardContext, ClipboardProvider};
 use cursive::traits::{Finder, Nameable};
 
 pub struct ContextMenu {
+    dialog: Modal<Dialog>,
+}
+
+pub struct AddToPlaylistMenu {
     dialog: Modal<Dialog>,
 }
 
@@ -38,8 +42,8 @@ impl ContextMenu {
         library: Arc<Library>,
         spotify: Arc<Spotify>,
         track: Track,
-    ) -> Modal<Dialog> {
-        let mut list_select: SelectView<Playlist> = SelectView::new().autojump();
+    ) -> NamedView<AddToPlaylistMenu> {
+        let mut list_select: SelectView<Playlist> = SelectView::new();
         let current_user_id = library.user_id.as_ref().unwrap();
 
         for list in library.items().iter() {
@@ -82,8 +86,12 @@ impl ContextMenu {
             .title("Add track to playlist")
             .dismiss_button("Cancel")
             .padding(Margins::lrtb(1, 1, 1, 0))
-            .content(ScrollView::new(list_select));
-        Modal::new(dialog)
+            .content(ScrollView::new(list_select.with_name("addplaylist_select")));
+
+        AddToPlaylistMenu {
+            dialog: Modal::new_ext(dialog),
+        }
+        .with_name("addtrackmenu")
     }
 
     fn track_already_added() -> Dialog {
@@ -94,7 +102,7 @@ impl ContextMenu {
     }
 
     pub fn new(item: &dyn ListItem, queue: Arc<Queue>, library: Arc<Library>) -> NamedView<Self> {
-        let mut content: SelectView<ContextMenuAction> = SelectView::new().autojump();
+        let mut content: SelectView<ContextMenuAction> = SelectView::new();
         if let Some(a) = item.artist() {
             content.add_item("Show artist", ContextMenuAction::ShowItem(Box::new(a)));
         }
@@ -119,7 +127,7 @@ impl ContextMenu {
                     true => "Unsave track",
                     false => "Save track",
                 },
-                ContextMenuAction::ToggleTrackSavedStatus(Box::new(t.clone())),
+                ContextMenuAction::ToggleTrackSavedStatus(Box::new(t)),
             )
         }
 
@@ -137,9 +145,7 @@ impl ContextMenu {
                 }
                 ContextMenuAction::ShareUrl(url) => {
                     #[cfg(feature = "share_clipboard")]
-                    ClipboardProvider::new()
-                        .and_then(|mut ctx: ClipboardContext| ctx.set_contents(url.to_string()))
-                        .ok();
+                    write_share(url.to_string());
                 }
                 ContextMenuAction::AddToPlaylist(track) => {
                     let dialog =
@@ -170,46 +176,57 @@ impl ContextMenu {
     }
 }
 
+impl ViewExt for AddToPlaylistMenu {
+    fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
+        handle_move_command::<Playlist>(&mut self.dialog, s, cmd, "addplaylist_select")
+    }
+}
+
 impl ViewExt for ContextMenu {
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
-        match cmd {
-            Command::Back => {
-                s.pop_layer();
-                Ok(CommandResult::Consumed(None))
-            }
-            Command::Move(mode, amount) => self
-                .dialog
-                .call_on_name(
-                    "contextmenu_select",
-                    |select: &mut SelectView<ContextMenuAction>| {
-                        let items = select.len();
-                        match mode {
-                            MoveMode::Up => {
-                                match amount {
-                                    MoveAmount::Extreme => select.set_selection(0),
-                                    MoveAmount::Integer(amount) => {
-                                        select.select_up(*amount as usize)
-                                    }
-                                };
-                                Ok(CommandResult::Consumed(None))
-                            }
-                            MoveMode::Down => {
-                                match amount {
-                                    MoveAmount::Extreme => select.set_selection(items),
-                                    MoveAmount::Integer(amount) => {
-                                        select.select_down(*amount as usize)
-                                    }
-                                };
-                                Ok(CommandResult::Consumed(None))
-                            }
-                            _ => Ok(CommandResult::Consumed(None)),
-                        }
-                    },
-                )
-                .unwrap_or(Ok(CommandResult::Consumed(None))),
-            _ => Ok(CommandResult::Consumed(None)),
-        }
+        handle_move_command::<ContextMenuAction>(&mut self.dialog, s, cmd, "contextmenu_select")
     }
+}
+
+fn handle_move_command<T: 'static>(
+    sel: &mut Modal<Dialog>,
+    s: &mut Cursive,
+    cmd: &Command,
+    name: &str,
+) -> Result<CommandResult, String> {
+    match cmd {
+        Command::Back => {
+            s.pop_layer();
+            Ok(CommandResult::Consumed(None))
+        }
+        Command::Move(mode, amount) => sel
+            .call_on_name(name, |select: &mut SelectView<T>| {
+                let items = select.len();
+                match mode {
+                    MoveMode::Up => {
+                        match amount {
+                            MoveAmount::Extreme => select.set_selection(0),
+                            MoveAmount::Integer(amount) => select.select_up(*amount as usize),
+                        };
+                        Ok(CommandResult::Consumed(None))
+                    }
+                    MoveMode::Down => {
+                        match amount {
+                            MoveAmount::Extreme => select.set_selection(items),
+                            MoveAmount::Integer(amount) => select.select_down(*amount as usize),
+                        };
+                        Ok(CommandResult::Consumed(None))
+                    }
+                    _ => Ok(CommandResult::Consumed(None)),
+                }
+            })
+            .unwrap_or(Ok(CommandResult::Consumed(None))),
+        _ => Ok(CommandResult::Consumed(None)),
+    }
+}
+
+impl ViewWrapper for AddToPlaylistMenu {
+    wrap_impl!(self.dialog: Modal<Dialog>);
 }
 
 impl ViewWrapper for ContextMenu {

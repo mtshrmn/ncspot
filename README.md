@@ -10,7 +10,7 @@ Read the upstream readme for the entire documentation
 * Play and pause icons are reversed
 * Simmilar tracks have album name
 * Made for you tab
-
+* Autoplay simmilar tracks at end of queue (use `autoplay = true` in config)
 --- 
 
 ##### custom commands:

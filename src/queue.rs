@@ -5,10 +5,13 @@ use std::sync::{Arc, RwLock};
 use {gdk_pixbuf::Pixbuf, libnotify::Notification, std::fs::File, std::io::copy, tempdir::TempDir};
 
 use rand::prelude::*;
+use rayon::prelude::*;
 use strum_macros::Display;
 
 use crate::config::Config;
 use crate::playable::Playable;
+use crate::track::Track;
+use rspotify::model::track::FullTrack;
 use crate::spotify::Spotify;
 
 #[derive(Display, Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
@@ -321,7 +324,6 @@ impl Queue {
     }
 
     pub fn next(&self, manual: bool) {
-        let q = self.queue.read().unwrap();
         let current = *self.current_track.read().unwrap();
         let repeat = *self.repeat.read().unwrap();
 
@@ -334,13 +336,43 @@ impl Queue {
             if repeat == RepeatSetting::RepeatTrack && manual {
                 self.set_repeat(RepeatSetting::RepeatPlaylist);
             }
-        } else if repeat == RepeatSetting::RepeatPlaylist && q.len() > 0 {
+        } else if repeat == RepeatSetting::RepeatPlaylist && self.len() > 0 {
             let random_order = self.random_order.read().unwrap();
             self.play(
                 random_order.as_ref().map(|o| o[0]).unwrap_or(0),
                 false,
                 false,
             );
+        } else if self.cfg.values().autoplay.unwrap_or(false) {
+            if let Some(current_track) = self.get_current() {
+                if let Some(id) = current_track.id() {
+                    let recommendations: Vec<Track> = self.spotify
+                        .recommentations(None, None, Some(vec![id.clone()]))
+                        .map(|r| r.tracks)
+                        .map(|tracks| {
+                            tracks
+                                .par_iter()
+                                .filter_map(|track| match track.id.as_ref() {
+                                    Some(id) => Some(Track::from(&self.spotify.track(id).unwrap())),
+                                    None => None,
+                                })
+                                .collect()
+                        }).unwrap_or(Vec::new());
+
+                    let tracks: Vec<Playable> = recommendations
+                        .iter()
+                        .map(|track| Playable::Track(track.clone()))
+                        .collect();
+
+                    self.append_next(tracks);
+                }
+            }
+
+            if let Some(index) = self.next_index() {
+                self.play(index, false, false);
+            } else {
+                self.spotify.stop();
+            }
         } else {
             self.spotify.stop();
         }

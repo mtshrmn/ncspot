@@ -19,7 +19,7 @@ use crate::playable::Playable;
 use crate::playlist::Playlist;
 use crate::queue::{Queue, RepeatSetting};
 use crate::show::Show;
-use crate::spotify::{PlayerEvent, Spotify, URIType, VOLUME_PERCENT};
+use crate::spotify::{PlayerEvent, Spotify, UriType, VOLUME_PERCENT};
 use crate::track::Track;
 use crate::traits::ListItem;
 use regex::Regex;
@@ -28,10 +28,10 @@ type Metadata = HashMap<String, Variant<Box<dyn RefArg>>>;
 
 struct MprisState(String, Option<Playable>);
 
-fn get_playbackstatus(spotify: Arc<Spotify>) -> String {
+fn get_playbackstatus(spotify: Spotify) -> String {
     match spotify.get_current_status() {
-        PlayerEvent::Playing => "Playing",
-        PlayerEvent::Paused => "Paused",
+        PlayerEvent::Playing(_) | PlayerEvent::FinishedTrack => "Playing",
+        PlayerEvent::Paused(_) => "Paused",
         _ => "Stopped",
     }
     .to_string()
@@ -53,9 +53,9 @@ fn get_metadata(playable: Option<Playable>) -> Metadata {
     );
     hm.insert(
         "mpris:length".to_string(),
-        Variant(Box::new(i64::from(
-            playable.map(|t| t.duration() * 1_000).unwrap_or(0),
-        ))),
+        Variant(Box::new(
+            playable.map(|t| t.duration() as i64 * 1_000).unwrap_or(0),
+        )),
     );
     hm.insert(
         "mpris:artUrl".to_string(),
@@ -136,7 +136,7 @@ fn get_metadata(playable: Option<Playable>) -> Metadata {
 
 fn run_dbus_server(
     ev: EventManager,
-    spotify: Arc<Spotify>,
+    spotify: Spotify,
     queue: Arc<Queue>,
     rx: mpsc::Receiver<MprisState>,
 ) {
@@ -231,18 +231,29 @@ fn run_dbus_server(
     };
 
     let property_loopstatus = {
-        let queue = queue.clone();
+        let queue1 = queue.clone();
+        let queue2 = queue.clone();
         f.property::<String, _>("LoopStatus", ())
-            .access(Access::Read)
+            .access(Access::ReadWrite)
             .on_get(move |iter, _| {
                 iter.append(
-                    match queue.get_repeat() {
+                    match queue1.get_repeat() {
                         RepeatSetting::None => "None",
                         RepeatSetting::RepeatTrack => "Track",
                         RepeatSetting::RepeatPlaylist => "Playlist",
                     }
                     .to_string(),
                 );
+                Ok(())
+            })
+            .on_set(move |iter, _| {
+                let setting = match iter.get::<&str>().unwrap_or_default() {
+                    "Track" => RepeatSetting::RepeatTrack,
+                    "Playlist" => RepeatSetting::RepeatPlaylist,
+                    _ => RepeatSetting::None,
+                };
+                queue2.set_repeat(setting);
+
                 Ok(())
             })
     };
@@ -400,9 +411,9 @@ fn run_dbus_server(
         });
 
     let method_playpause = {
-        let spotify = spotify.clone();
+        let queue = queue.clone();
         f.method("PlayPause", (), move |m| {
-            spotify.toggleplayback();
+            queue.toggleplayback();
             Ok(vec![m.msg.method_return()])
         })
     };
@@ -527,9 +538,9 @@ fn run_dbus_server(
                 None => "".to_string(),
             };
             let id = &uri[uri.rfind(':').unwrap_or(0) + 1..uri.len()];
-            let uri_type = URIType::from_uri(&uri);
+            let uri_type = UriType::from_uri(&uri);
             match uri_type {
-                Some(URIType::Album) => {
+                Some(UriType::Album) => {
                     if let Some(a) = spotify.album(&id) {
                         if let Some(t) = &Album::from(&a).tracks {
                             queue.clear();
@@ -542,14 +553,14 @@ fn run_dbus_server(
                         }
                     }
                 }
-                Some(URIType::Track) => {
+                Some(UriType::Track) => {
                     if let Some(t) = spotify.track(&id) {
                         queue.clear();
                         queue.append(Playable::Track(Track::from(&t)));
                         queue.play(0, false, false)
                     }
                 }
-                Some(URIType::Playlist) => {
+                Some(UriType::Playlist) => {
                     if let Some(p) = spotify.playlist(&id) {
                         let mut playlist = Playlist::from(&p);
                         let spotify = spotify.clone();
@@ -565,11 +576,11 @@ fn run_dbus_server(
                         }
                     }
                 }
-                Some(URIType::Show) => {
+                Some(UriType::Show) => {
                     if let Some(s) = spotify.get_show(&id) {
-                        let mut show = Show::from(&s);
+                        let mut show: Show = (&s).into();
                         let spotify = spotify.clone();
-                        show.load_episodes(spotify);
+                        show.load_all_episodes(spotify);
                         if let Some(e) = &show.episodes {
                             queue.clear();
                             let mut ep = e.clone();
@@ -583,14 +594,14 @@ fn run_dbus_server(
                         }
                     }
                 }
-                Some(URIType::Episode) => {
+                Some(UriType::Episode) => {
                     if let Some(e) = spotify.episode(&id) {
                         queue.clear();
                         queue.append(Playable::Episode(Episode::from(&e)));
                         queue.play(0, false, false)
                     }
                 }
-                Some(URIType::Artist) => {
+                Some(UriType::Artist) => {
                     if let Some(a) = spotify.artist_top_tracks(&id) {
                         queue.clear();
                         queue.append_next(a.iter().map(|track| Playable::Track(track.clone())).collect());
@@ -680,11 +691,11 @@ fn run_dbus_server(
 pub struct MprisManager {
     tx: mpsc::Sender<MprisState>,
     queue: Arc<Queue>,
-    spotify: Arc<Spotify>,
+    spotify: Spotify,
 }
 
 impl MprisManager {
-    pub fn new(ev: EventManager, spotify: Arc<Spotify>, queue: Arc<Queue>) -> Self {
+    pub fn new(ev: EventManager, spotify: Spotify, queue: Arc<Queue>) -> Self {
         let (tx, rx) = mpsc::channel::<MprisState>();
 
         {

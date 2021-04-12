@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use rspotify::model::artist::{FullArtist, SimplifiedArtist};
 
-use crate::album::Album;
 use crate::library::Library;
 use crate::playable::Playable;
 use crate::queue::Queue;
@@ -17,7 +16,6 @@ pub struct Artist {
     pub id: Option<String>,
     pub name: String,
     pub url: Option<String>,
-    pub albums: Option<Vec<Album>>,
     pub tracks: Option<Vec<Track>>,
     pub is_followed: bool,
 }
@@ -28,54 +26,16 @@ impl Artist {
             id: Some(id),
             name,
             url: None,
-            albums: None,
             tracks: None,
             is_followed: false,
         }
     }
 
-    pub fn load_albums(&mut self, spotify: Arc<Spotify>) {
-        if let Some(albums) = self.albums.as_mut() {
-            for album in albums {
-                album.load_tracks(spotify.clone());
+    pub fn load_top_tracks(&mut self, spotify: Spotify) {
+        if let Some(artist_id) = &self.id {
+            if self.tracks.is_none() {
+                self.tracks = spotify.artist_top_tracks(artist_id);
             }
-            return;
-        }
-
-        if let Some(ref artist_id) = self.id {
-            if let Some(sas) = spotify.artist_albums(artist_id, 50, 0) {
-                let mut albums: Vec<Album> = Vec::new();
-
-                for sa in sas.items {
-                    if Some("appears_on".into()) == sa.album_group {
-                        continue;
-                    }
-
-                    if let Some(album_id) = sa.id {
-                        if let Some(fa) = spotify.full_album(&album_id).as_ref() {
-                            albums.push(fa.into());
-                        }
-                    }
-                }
-                albums.sort_by(|a, b| b.year.cmp(&a.year));
-                self.albums = Some(albums);
-            }
-        }
-    }
-
-    fn tracks(&self) -> Option<Vec<&Track>> {
-        if let Some(tracks) = self.tracks.as_ref() {
-            Some(tracks.iter().collect())
-        } else if let Some(albums) = self.albums.as_ref() {
-            Some(
-                albums
-                    .iter()
-                    .map(|a| a.tracks.as_ref().unwrap())
-                    .flatten()
-                    .collect(),
-            )
-        } else {
-            None
         }
     }
 }
@@ -86,7 +46,6 @@ impl From<&SimplifiedArtist> for Artist {
             id: sa.id.clone(),
             name: sa.name.clone(),
             url: sa.uri.clone(),
-            albums: None,
             tracks: None,
             is_followed: false,
         }
@@ -99,7 +58,6 @@ impl From<&FullArtist> for Artist {
             id: Some(fa.id.clone()),
             name: fa.name.clone(),
             url: Some(fa.uri.clone()),
-            albums: None,
             tracks: None,
             is_followed: false,
         }
@@ -120,20 +78,15 @@ impl fmt::Debug for Artist {
 
 impl ListItem for Artist {
     fn is_playing(&self, queue: Arc<Queue>) -> bool {
-        if let Some(tracks) = self.tracks() {
+        if let Some(tracks) = &self.tracks {
             let playing: Vec<String> = queue
                 .queue
                 .read()
                 .unwrap()
                 .iter()
-                .filter(|t| t.id().is_some())
-                .map(|t| t.id().unwrap())
+                .filter_map(|t| t.id())
                 .collect();
-            let ids: Vec<String> = tracks
-                .iter()
-                .filter(|t| t.id.is_some())
-                .map(|t| t.id.clone().unwrap())
-                .collect();
+            let ids: Vec<String> = tracks.iter().filter_map(|t| t.id.clone()).collect();
             !ids.is_empty() && playing == ids
         } else {
             false
@@ -169,7 +122,7 @@ impl ListItem for Artist {
     }
 
     fn play(&mut self, queue: Arc<Queue>) {
-        self.load_albums(queue.get_spotify());
+        self.load_top_tracks(queue.get_spotify());
 
         if let Some(tracks) = self.tracks.as_ref() {
             let tracks: Vec<Playable> = tracks
@@ -182,7 +135,7 @@ impl ListItem for Artist {
     }
 
     fn play_next(&mut self, queue: Arc<Queue>) {
-        self.load_albums(queue.get_spotify());
+        self.load_top_tracks(queue.get_spotify());
 
         if let Some(tracks) = self.tracks.as_ref() {
             for t in tracks.iter().rev() {
@@ -192,9 +145,9 @@ impl ListItem for Artist {
     }
 
     fn queue(&mut self, queue: Arc<Queue>) {
-        self.load_albums(queue.get_spotify());
+        self.load_top_tracks(queue.get_spotify());
 
-        if let Some(tracks) = self.tracks() {
+        if let Some(tracks) = &self.tracks {
             for t in tracks {
                 queue.append(Playable::Track(t.clone()));
             }
@@ -218,7 +171,7 @@ impl ListItem for Artist {
     }
 
     fn open(&self, queue: Arc<Queue>, library: Arc<Library>) -> Option<Box<dyn ViewExt>> {
-        Some(ArtistView::new(queue, library, self).as_boxed_view_ext())
+        Some(ArtistView::new(queue, library, self).into_boxed_view_ext())
     }
 
     fn share_url(&self) -> Option<String> {

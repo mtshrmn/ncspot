@@ -27,7 +27,7 @@ pub struct Album {
 }
 
 impl Album {
-    pub fn load_tracks(&mut self, spotify: Arc<Spotify>) {
+    pub fn load_all_tracks(&mut self, spotify: Spotify) {
         if self.tracks.is_some() {
             return;
         }
@@ -69,12 +69,7 @@ impl From<&SimplifiedAlbum> for Album {
             id: sa.id.clone(),
             title: sa.name.clone(),
             artists: sa.artists.iter().map(|sa| sa.name.clone()).collect(),
-            artist_ids: sa
-                .artists
-                .iter()
-                .filter(|a| a.id.is_some())
-                .map(|sa| sa.id.clone().unwrap())
-                .collect(),
+            artist_ids: sa.artists.iter().filter_map(|a| a.id.clone()).collect(),
             year: sa
                 .release_date
                 .clone()
@@ -105,12 +100,7 @@ impl From<&FullAlbum> for Album {
             id: Some(fa.id.clone()),
             title: fa.name.clone(),
             artists: fa.artists.iter().map(|sa| sa.name.clone()).collect(),
-            artist_ids: fa
-                .artists
-                .iter()
-                .filter(|a| a.id.is_some())
-                .map(|sa| sa.id.clone().unwrap())
-                .collect(),
+            artist_ids: fa.artists.iter().filter_map(|a| a.id.clone()).collect(),
             year: fa.release_date.split('-').next().unwrap().into(),
             cover_url: fa.images.get(0).map(|i| i.url.clone()),
             url: Some(fa.uri.clone()),
@@ -154,14 +144,10 @@ impl ListItem for Album {
                 .read()
                 .unwrap()
                 .iter()
-                .filter(|t| t.id().is_some())
-                .map(|t| t.id().unwrap())
+                .filter_map(|t| t.id())
                 .collect();
-            let ids: Vec<String> = tracks
-                .iter()
-                .filter(|t| t.id.is_some())
-                .map(|t| t.id.clone().unwrap())
-                .collect();
+
+            let ids: Vec<String> = tracks.iter().filter_map(|t| t.id.clone()).collect();
             !ids.is_empty() && playing == ids
         } else {
             false
@@ -190,7 +176,7 @@ impl ListItem for Album {
     }
 
     fn play(&mut self, queue: Arc<Queue>) {
-        self.load_tracks(queue.get_spotify());
+        self.load_all_tracks(queue.get_spotify());
 
         if let Some(tracks) = self.tracks.as_ref() {
             let tracks: Vec<Playable> = tracks
@@ -203,7 +189,7 @@ impl ListItem for Album {
     }
 
     fn play_next(&mut self, queue: Arc<Queue>) {
-        self.load_tracks(queue.get_spotify());
+        self.load_all_tracks(queue.get_spotify());
 
         if let Some(tracks) = self.tracks.as_ref() {
             for t in tracks.iter().rev() {
@@ -213,7 +199,7 @@ impl ListItem for Album {
     }
 
     fn queue(&mut self, queue: Arc<Queue>) {
-        self.load_tracks(queue.get_spotify());
+        self.load_all_tracks(queue.get_spotify());
 
         if let Some(tracks) = self.tracks.as_ref() {
             for t in tracks {
@@ -239,7 +225,7 @@ impl ListItem for Album {
     }
 
     fn open(&self, queue: Arc<Queue>, library: Arc<Library>) -> Option<Box<dyn ViewExt>> {
-        Some(AlbumView::new(queue, library, self).as_boxed_view_ext())
+        Some(AlbumView::new(queue, library, self).into_boxed_view_ext())
     }
 
     fn share_url(&self) -> Option<String> {
@@ -248,10 +234,13 @@ impl ListItem for Album {
             .map(|id| format!("https://open.spotify.com/album/{}", id))
     }
 
-    fn artist(&self) -> Option<Artist> {
-        Some(Artist::new(
-            self.artist_ids[0].clone(),
-            self.artists[0].clone(),
-        ))
+    fn artists(&self) -> Option<Vec<Artist>> {
+        Some(
+            self.artist_ids
+                .iter()
+                .zip(self.artists.iter())
+                .map(|(id, name)| Artist::new(id.clone(), name.clone()))
+                .collect(),
+        )
     }
 }

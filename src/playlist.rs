@@ -1,15 +1,15 @@
-use std::iter::Iterator;
 use std::sync::Arc;
+use std::{cmp::Ordering, iter::Iterator};
 
 use rspotify::model::playlist::{FullPlaylist, SimplifiedPlaylist};
 
-use crate::library::Library;
 use crate::playable::Playable;
 use crate::queue::Queue;
 use crate::spotify::Spotify;
 use crate::track::Track;
 use crate::traits::{IntoBoxedViewExt, ListItem, ViewExt};
 use crate::ui::playlist::PlaylistView;
+use crate::{command::SortDirection, command::SortKey, library::Library};
 
 pub enum PlaylistType {
     Library,
@@ -28,7 +28,7 @@ pub struct Playlist {
 }
 
 impl Playlist {
-    pub fn load_tracks(&mut self, spotify: Arc<Spotify>) {
+    pub fn load_tracks(&mut self, spotify: Spotify) {
         if self.tracks.is_some() {
             return;
         }
@@ -36,35 +36,14 @@ impl Playlist {
         self.tracks = Some(self.get_all_tracks(spotify));
     }
 
-    fn get_all_tracks(&self, spotify: Arc<Spotify>) -> Vec<Track> {
-        let mut collected_tracks = Vec::new();
-
-        let mut tracks_result = spotify.user_playlist_tracks(&self.id, 100, 0);
-        while let Some(ref tracks) = tracks_result.clone() {
-            for listtrack in &tracks.items {
-                if let Some(track) = &listtrack.track {
-                    let mut t: Track = track.into();
-                    t.added_at = Some(listtrack.added_at);
-                    collected_tracks.push(t);
-                }
-            }
-            debug!("got {} tracks", tracks.items.len());
-
-            // load next batch if necessary
-            tracks_result = match tracks.next {
-                Some(_) => {
-                    debug!("requesting tracks again..");
-                    spotify.user_playlist_tracks(
-                        &self.id,
-                        100,
-                        tracks.offset + tracks.items.len() as u32,
-                    )
-                }
-                None => None,
-            }
+    fn get_all_tracks(&self, spotify: Spotify) -> Vec<Track> {
+        let tracks_result = spotify.user_playlist_tracks(&self.id);
+        while !tracks_result.at_end() {
+            tracks_result.next();
         }
 
-        collected_tracks
+        let tracks = tracks_result.items.read().unwrap();
+        tracks.clone()
     }
 
     pub fn has_track(&self, track_id: &str) -> bool {
@@ -75,33 +54,27 @@ impl Playlist {
         })
     }
 
-    pub fn delete_tracks(
-        &mut self,
-        track_pos_pairs: &[(Track, usize)],
-        spotify: Arc<Spotify>,
-        library: Arc<Library>,
-    ) {
-        if spotify.delete_tracks(&self.id, track_pos_pairs) {
-            if let Some(tracks) = &mut self.tracks {
-                for (_track, pos) in track_pos_pairs {
-                    tracks.remove(*pos);
+    pub fn delete_track(&mut self, index: usize, spotify: Spotify, library: Arc<Library>) -> bool {
+        let track = self.tracks.as_ref().unwrap()[index].clone();
+        debug!("deleting track: {} {:?}", index, track);
+        match spotify.delete_tracks(&self.id, &self.snapshot_id, &[(&track, track.list_index)]) {
+            false => false,
+            true => {
+                if let Some(tracks) = &mut self.tracks {
+                    tracks.remove(index);
+                    library.playlist_update(&self);
                 }
-                library.playlist_update(&self);
+
+                true
             }
         }
     }
 
-    pub fn append_tracks(
-        &mut self,
-        new_tracks: &[Track],
-        spotify: Arc<Spotify>,
-        library: Arc<Library>,
-    ) {
+    pub fn append_tracks(&mut self, new_tracks: &[Track], spotify: Spotify, library: Arc<Library>) {
         let track_ids: Vec<String> = new_tracks
             .to_vec()
             .iter()
-            .filter(|t| t.id.is_some())
-            .map(|t| t.id.clone().unwrap())
+            .filter_map(|t| t.id.clone())
             .collect();
 
         let mut has_modified = false;
@@ -115,6 +88,58 @@ impl Playlist {
 
         if has_modified {
             library.playlist_update(self);
+        }
+    }
+
+    pub fn sort(&mut self, key: &SortKey, direction: &SortDirection) {
+        fn compare_artists(a: Vec<String>, b: Vec<String>) -> Ordering {
+            let sanitize_artists_name = |x: Vec<String>| -> Vec<String> {
+                x.iter()
+                    .map(|x| {
+                        x.to_lowercase()
+                            .split(' ')
+                            .skip_while(|x| x == &"the")
+                            .collect()
+                    })
+                    .collect()
+            };
+
+            let a = sanitize_artists_name(a);
+            let b = sanitize_artists_name(b);
+
+            a.cmp(&b)
+        }
+
+        if let Some(c) = self.tracks.as_mut() {
+            c.sort_by(|a, b| match (a.track(), b.track()) {
+                (Some(a), Some(b)) => match (key, direction) {
+                    (SortKey::Title, SortDirection::Ascending) => {
+                        a.title.to_lowercase().cmp(&b.title.to_lowercase())
+                    }
+                    (SortKey::Title, SortDirection::Descending) => {
+                        b.title.to_lowercase().cmp(&a.title.to_lowercase())
+                    }
+                    (SortKey::Duration, SortDirection::Ascending) => a.duration.cmp(&b.duration),
+                    (SortKey::Duration, SortDirection::Descending) => b.duration.cmp(&a.duration),
+                    (SortKey::Album, SortDirection::Ascending) => a
+                        .album
+                        .map(|x| x.to_lowercase())
+                        .cmp(&b.album.map(|x| x.to_lowercase())),
+                    (SortKey::Album, SortDirection::Descending) => b
+                        .album
+                        .map(|x| x.to_lowercase())
+                        .cmp(&a.album.map(|x| x.to_lowercase())),
+                    (SortKey::Added, SortDirection::Ascending) => a.added_at.cmp(&b.added_at),
+                    (SortKey::Added, SortDirection::Descending) => b.added_at.cmp(&a.added_at),
+                    (SortKey::Artist, SortDirection::Ascending) => {
+                        compare_artists(a.artists, b.artists)
+                    }
+                    (SortKey::Artist, SortDirection::Descending) => {
+                        compare_artists(b.artists, a.artists)
+                    }
+                },
+                _ => std::cmp::Ordering::Equal,
+            })
         }
     }
 }
@@ -161,14 +186,9 @@ impl ListItem for Playlist {
                 .read()
                 .unwrap()
                 .iter()
-                .filter(|t| t.id().is_some())
-                .map(|t| t.id().unwrap())
+                .filter_map(|t| t.id())
                 .collect();
-            let ids: Vec<String> = tracks
-                .iter()
-                .filter(|t| t.id.is_some())
-                .map(|t| t.id.clone().unwrap())
-                .collect();
+            let ids: Vec<String> = tracks.iter().filter_map(|t| t.id.clone()).collect();
             !ids.is_empty() && playing == ids
         } else {
             false
@@ -258,7 +278,7 @@ impl ListItem for Playlist {
     }
 
     fn open(&self, queue: Arc<Queue>, library: Arc<Library>) -> Option<Box<dyn ViewExt>> {
-        Some(PlaylistView::new(queue, library, self).as_boxed_view_ext())
+        Some(PlaylistView::new(queue, library, self).into_boxed_view_ext())
     }
 
     fn share_url(&self) -> Option<String> {

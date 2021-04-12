@@ -1,10 +1,15 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::{RwLock, RwLockReadGuard};
+use std::path::PathBuf;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::{fs, process};
 
 use cursive::theme::Theme;
 use platform_dirs::AppDirs;
+
+use crate::command::{SortDirection, SortKey};
+use crate::playable::Playable;
+use crate::queue;
+use crate::serialization::{Serializer, CBOR, TOML};
 
 pub const CLIENT_ID: &str = "d420a117a32841c2b3474932e49fb54b";
 
@@ -14,7 +19,6 @@ pub struct ConfigValues {
     pub keybindings: Option<HashMap<String, String>>,
     pub theme: Option<ConfigTheme>,
     pub use_nerdfont: Option<bool>,
-    pub saved_state: Option<SavedState>,
     pub audio_cache: Option<bool>,
     pub backend: Option<String>,
     pub backend_device: Option<String>,
@@ -24,13 +28,10 @@ pub struct ConfigValues {
     pub bitrate: Option<u32>,
     pub album_column: Option<bool>,
     pub autoplay: Option<bool>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Default, Clone)]
-pub struct SavedState {
-    pub volume: Option<u8>,
+    pub gapless: Option<bool>,
     pub shuffle: Option<bool>,
-    pub repeat: Option<String>,
+    pub repeat: Option<queue::RepeatSetting>,
+    pub cover_max_scale: Option<f32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
@@ -55,12 +56,48 @@ pub struct ConfigTheme {
     pub search_match: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SortingOrder {
+    pub key: SortKey,
+    pub direction: SortDirection,
+}
+
+#[derive(Serialize, Default, Deserialize, Debug, Clone)]
+pub struct QueueState {
+    pub current_track: Option<usize>,
+    pub random_order: Option<Vec<usize>>,
+    pub track_progress: std::time::Duration,
+    pub queue: Vec<Playable>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct UserState {
+    pub volume: u16,
+    pub shuffle: bool,
+    pub repeat: queue::RepeatSetting,
+    pub queuestate: QueueState,
+    pub playlist_orders: HashMap<String, SortingOrder>,
+}
+
+impl Default for UserState {
+    fn default() -> Self {
+        UserState {
+            volume: u16::max_value(),
+            shuffle: false,
+            repeat: queue::RepeatSetting::None,
+            queuestate: QueueState::default(),
+            playlist_orders: HashMap::new(),
+        }
+    }
+}
+
 lazy_static! {
     pub static ref BASE_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
 }
 
 pub struct Config {
     values: RwLock<ConfigValues>,
+    state: RwLock<UserState>,
 }
 
 impl Config {
@@ -70,13 +107,48 @@ impl Config {
             process::exit(1);
         });
 
+        let mut userstate = {
+            let path = config_path("userstate.cbor");
+            CBOR.load_or_generate_default(path, || Ok(UserState::default()), true)
+                .expect("could not load user state")
+        };
+
+        if let Some(shuffle) = values.shuffle {
+            userstate.shuffle = shuffle;
+        }
+
+        if let Some(repeat) = values.repeat {
+            userstate.repeat = repeat;
+        }
+
         Self {
             values: RwLock::new(values),
+            state: RwLock::new(userstate),
         }
     }
 
     pub fn values(&self) -> RwLockReadGuard<ConfigValues> {
         self.values.read().expect("can't readlock config values")
+    }
+
+    pub fn state(&self) -> RwLockReadGuard<UserState> {
+        self.state.read().expect("can't readlock user state")
+    }
+
+    pub fn with_state_mut<F>(&self, cb: F)
+    where
+        F: Fn(RwLockWriteGuard<UserState>),
+    {
+        let state_guard = self.state.write().expect("can't writelock user state");
+        cb(state_guard);
+    }
+
+    pub fn save_state(&self) {
+        let path = config_path("userstate.cbor");
+        debug!("saving user state to {}", path.display());
+        if let Err(e) = CBOR.write(path, self.state().clone()) {
+            error!("Could not save user state: {}", e);
+        }
     }
 
     pub fn build_theme(&self) -> Theme {
@@ -92,7 +164,7 @@ impl Config {
 
 fn load() -> Result<ConfigValues, String> {
     let path = config_path("config.toml");
-    load_or_generate_default(path, |_| Ok(ConfigValues::default()), false)
+    TOML.load_or_generate_default(path, || Ok(ConfigValues::default()), false)
 }
 
 fn proj_dirs() -> AppDirs {
@@ -110,7 +182,6 @@ fn proj_dirs() -> AppDirs {
 pub fn config_path(file: &str) -> PathBuf {
     let proj_dirs = proj_dirs();
     let cfg_dir = &proj_dirs.config_dir;
-    trace!("{:?}", cfg_dir);
     if cfg_dir.exists() && !cfg_dir.is_dir() {
         fs::remove_file(cfg_dir).expect("unable to remove old config file");
     }
@@ -131,53 +202,4 @@ pub fn cache_path(file: &str) -> PathBuf {
     let mut pb = cache_dir.to_path_buf();
     pb.push(file);
     pb
-}
-
-/// Configuration and credential file helper
-/// Creates a default configuration if none exist, otherwise will optionally overwrite
-/// the file if it fails to parse
-pub fn load_or_generate_default<
-    P: AsRef<Path>,
-    T: serde::Serialize + serde::de::DeserializeOwned,
-    F: Fn(&Path) -> Result<T, String>,
->(
-    path: P,
-    default: F,
-    default_on_parse_failure: bool,
-) -> Result<T, String> {
-    let path = path.as_ref();
-    // Nothing exists so just write the default and return it
-    if !path.exists() {
-        let value = default(&path)?;
-        return write_content_helper(&path, value);
-    }
-
-    // load the serialized content. Always report this failure
-    let contents = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Unable to read {}: {}", path.to_string_lossy(), e))?;
-
-    // Deserialize the content, optionally fall back to default if it fails
-    let result = toml::from_str(&contents);
-    if default_on_parse_failure && result.is_err() {
-        let value = default(&path)?;
-        return write_content_helper(&path, value);
-    }
-    result.map_err(|e| format!("Unable to parse {}: {}", path.to_string_lossy(), e))
-}
-
-fn write_content_helper<P: AsRef<Path>, T: serde::Serialize>(
-    path: P,
-    value: T,
-) -> Result<T, String> {
-    let content =
-        toml::to_string_pretty(&value).map_err(|e| format!("Failed serializing value: {}", e))?;
-    fs::write(path.as_ref(), content)
-        .map(|_| value)
-        .map_err(|e| {
-            format!(
-                "Failed writing content to {}: {}",
-                path.as_ref().display(),
-                e
-            )
-        })
 }

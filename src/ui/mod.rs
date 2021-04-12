@@ -6,10 +6,15 @@ pub mod layout;
 pub mod library;
 pub mod listview;
 pub mod modal;
+pub mod pagination;
 pub mod playlist;
 pub mod playlists;
 pub mod queue;
 pub mod search;
+pub mod search_results;
 pub mod show;
 pub mod statusbar;
 pub mod tabview;
+
+#[cfg(feature = "cover")]
+pub mod cover;

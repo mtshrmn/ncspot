@@ -8,25 +8,31 @@ use rand::prelude::*;
 use rayon::prelude::*;
 use strum_macros::Display;
 
-use crate::config::Config;
 use crate::playable::Playable;
 use crate::track::Track;
-use rspotify::model::track::FullTrack;
 use crate::spotify::Spotify;
+use crate::{config::Config, spotify::PlayerEvent};
 
 #[derive(Display, Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 pub enum RepeatSetting {
+    #[serde(rename = "off")]
     None,
+    #[serde(rename = "playlist")]
     RepeatPlaylist,
+    #[serde(rename = "track")]
     RepeatTrack,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum QueueEvent {
+    PreloadTrackRequest,
 }
 
 pub struct Queue {
     pub queue: Arc<RwLock<Vec<Playable>>>,
     random_order: RwLock<Option<Vec<usize>>>,
     current_track: RwLock<Option<usize>>,
-    repeat: RwLock<RepeatSetting>,
-    spotify: Arc<Spotify>,
+    spotify: Spotify,
     cfg: Arc<Config>,
     #[cfg(feature = "notify")]
     notification: Notification,
@@ -36,22 +42,28 @@ unsafe impl Send for Queue {}
 unsafe impl Sync for Queue {}
 
 impl Queue {
-    pub fn new(spotify: Arc<Spotify>, cfg: Arc<Config>) -> Queue {
+    pub fn new(spotify: Spotify, cfg: Arc<Config>) -> Queue {
+        let state = cfg.state().queuestate.clone();
         #[cfg(feature = "notify")]
         libnotify::init("Spotify").unwrap();
 
         let q = Queue {
-            queue: Arc::new(RwLock::new(Vec::new())),
-            spotify,
-            current_track: RwLock::new(None),
-            repeat: RwLock::new(RepeatSetting::None),
-            random_order: RwLock::new(None),
+            queue: Arc::new(RwLock::new(state.queue)),
+            spotify: spotify.clone(),
+            current_track: RwLock::new(state.current_track),
+            random_order: RwLock::new(state.random_order),
             #[cfg(feature = "notify")]
             notification: Notification::new("Playback Notification", None, None),
             cfg,
         };
-        q.set_repeat(q.spotify.repeat);
-        q.set_shuffle(q.spotify.shuffle);
+
+        if let Some(playable) = q.get_current() {
+            spotify.load(&playable, false, state.track_progress.as_millis() as u32);
+            spotify.update_track();
+            spotify.pause();
+            spotify.seek(state.track_progress.as_millis() as u32);
+        }
+
         q
     }
 
@@ -255,11 +267,11 @@ impl Queue {
     pub fn play(&self, mut index: usize, reshuffle: bool, shuffle_index: bool) {
         if shuffle_index && self.get_shuffle() {
             let mut rng = rand::thread_rng();
-            index = rng.gen_range(0, &self.queue.read().unwrap().len());
+            index = rng.gen_range(0..self.queue.read().unwrap().len());
         }
 
         if let Some(track) = &self.queue.read().unwrap().get(index) {
-            self.spotify.load(&track);
+            self.spotify.load(&track, true, 0);
             let mut current = self.current_track.write().unwrap();
             current.replace(index);
             self.spotify.update_track();
@@ -314,7 +326,16 @@ impl Queue {
     }
 
     pub fn toggleplayback(&self) {
-        self.spotify.toggleplayback();
+        match self.spotify.get_current_status() {
+            PlayerEvent::Playing(_) | PlayerEvent::Paused(_) => {
+                self.spotify.toggleplayback();
+            }
+            PlayerEvent::Stopped => match self.next_index() {
+                Some(_) => self.next(false),
+                None => self.play(0, false, false),
+            },
+            _ => (),
+        }
     }
 
     pub fn stop(&self) {
@@ -325,7 +346,7 @@ impl Queue {
 
     pub fn next(&self, manual: bool) {
         let current = *self.current_track.read().unwrap();
-        let repeat = *self.repeat.read().unwrap();
+        let repeat = self.cfg.state().repeat;
 
         if repeat == RepeatSetting::RepeatTrack && !manual {
             if let Some(index) = current {
@@ -347,7 +368,7 @@ impl Queue {
             if let Some(current_track) = self.get_current() {
                 if let Some(id) = current_track.id() {
                     let recommendations: Vec<Track> = self.spotify
-                        .recommentations(None, None, Some(vec![id.clone()]))
+                        .recommendations(None, None, Some(vec![id.clone()]))
                         .map(|r| r.tracks)
                         .map(|tracks| {
                             tracks
@@ -381,7 +402,7 @@ impl Queue {
     pub fn previous(&self) {
         let q = self.queue.read().unwrap();
         let current = *self.current_track.read().unwrap();
-        let repeat = *self.repeat.read().unwrap();
+        let repeat = self.cfg.state().repeat;
 
         if let Some(index) = self.previous_index() {
             self.play(index, false, false);
@@ -402,18 +423,19 @@ impl Queue {
     }
 
     pub fn get_repeat(&self) -> RepeatSetting {
-        let repeat = self.repeat.read().unwrap();
-        *repeat
+        self.cfg.state().repeat
     }
 
     pub fn set_repeat(&self, new: RepeatSetting) {
-        let mut repeat = self.repeat.write().unwrap();
-        *repeat = new;
+        self.cfg.with_state_mut(|mut s| s.repeat = new);
     }
 
     pub fn get_shuffle(&self) -> bool {
-        let random_order = self.random_order.read().unwrap();
-        random_order.is_some()
+        self.cfg.state().shuffle
+    }
+
+    pub fn get_random_order(&self) -> Option<Vec<usize>> {
+        self.random_order.read().unwrap().clone()
     }
 
     fn generate_random_order(&self) {
@@ -435,6 +457,7 @@ impl Queue {
     }
 
     pub fn set_shuffle(&self, new: bool) {
+        self.cfg.with_state_mut(|mut s| s.shuffle = new);
         if new {
             self.generate_random_order();
         } else {
@@ -443,7 +466,19 @@ impl Queue {
         }
     }
 
-    pub fn get_spotify(&self) -> Arc<Spotify> {
+    pub fn handle_event(&self, event: QueueEvent) {
+        match event {
+            QueueEvent::PreloadTrackRequest => {
+                if let Some(next_index) = self.next_index() {
+                    let track = self.queue.read().unwrap()[next_index].clone();
+                    debug!("Preloading track {} as requested by librespot", track);
+                    self.spotify.preload(&track);
+                }
+            }
+        }
+    }
+
+    pub fn get_spotify(&self) -> Spotify {
         self.spotify.clone()
     }
 }

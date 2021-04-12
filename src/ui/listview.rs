@@ -9,11 +9,8 @@ use cursive::view::ScrollBase;
 use cursive::{Cursive, Printer, Rect, Vec2};
 use unicode_width::UnicodeWidthStr;
 
-use crate::album::Album;
 use crate::artist::Artist;
-use crate::command::{
-    Command, GotoMode, JumpMode, MoveAmount, MoveMode, SortDirection, SortKey, TargetMode,
-};
+use crate::command::{Command, GotoMode, JumpMode, MoveAmount, MoveMode, TargetMode};
 use crate::commands::CommandResult;
 use crate::episode::Episode;
 use crate::library::Library;
@@ -28,71 +25,8 @@ use crate::traits::{IntoBoxedViewExt, ListItem, ViewExt};
 use crate::ui::album::AlbumView;
 use crate::ui::artist::ArtistView;
 use crate::ui::contextmenu::ContextMenu;
-use regex::Regex;
-
-pub type Paginator<I> = Box<dyn Fn(Arc<RwLock<Vec<I>>>) + Send + Sync>;
-
-pub struct Pagination<I: ListItem> {
-    max_content: Arc<RwLock<Option<usize>>>,
-    callback: Arc<RwLock<Option<Paginator<I>>>>,
-    busy: Arc<RwLock<bool>>,
-}
-
-impl<I: ListItem> Default for Pagination<I> {
-    fn default() -> Self {
-        Pagination {
-            max_content: Arc::new(RwLock::new(None)),
-            callback: Arc::new(RwLock::new(None)),
-            busy: Arc::new(RwLock::new(false)),
-        }
-    }
-}
-
-// TODO: figure out why deriving Clone doesn't work
-impl<I: ListItem> Clone for Pagination<I> {
-    fn clone(&self) -> Self {
-        Pagination {
-            max_content: self.max_content.clone(),
-            callback: self.callback.clone(),
-            busy: self.busy.clone(),
-        }
-    }
-}
-
-impl<I: ListItem> Pagination<I> {
-    pub fn clear(&mut self) {
-        *self.max_content.write().unwrap() = None;
-        *self.callback.write().unwrap() = None;
-    }
-    pub fn set(&mut self, max_content: usize, callback: Paginator<I>) {
-        *self.max_content.write().unwrap() = Some(max_content);
-        *self.callback.write().unwrap() = Some(callback);
-    }
-
-    fn max_content(&self) -> Option<usize> {
-        *self.max_content.read().unwrap()
-    }
-
-    fn is_busy(&self) -> bool {
-        *self.busy.read().unwrap()
-    }
-
-    fn call(&self, content: &Arc<RwLock<Vec<I>>>) {
-        let pagination = self.clone();
-        let content = content.clone();
-        if !self.is_busy() {
-            *self.busy.write().unwrap() = true;
-            std::thread::spawn(move || {
-                let cb = pagination.callback.read().unwrap();
-                if let Some(ref cb) = *cb {
-                    debug!("calling paginator!");
-                    cb(content);
-                    *pagination.busy.write().unwrap() = false;
-                }
-            });
-        }
-    }
-}
+use crate::ui::pagination::Pagination;
+use crate::{album::Album, spotify::UriType, spotify_url::SpotifyUrl};
 
 pub struct ListView<I: ListItem> {
     content: Arc<RwLock<Vec<I>>>,
@@ -216,58 +150,6 @@ impl<I: ListItem> ListView<I> {
         let mut c = self.content.write().unwrap();
         c.remove(index);
     }
-
-    pub fn sort(&self, key: &SortKey, direction: &SortDirection) {
-        fn compare_artists(a: Vec<String>, b: Vec<String>) -> Ordering {
-            let sanitize_artists_name = |x: Vec<String>| -> Vec<String> {
-                x.iter()
-                    .map(|x| {
-                        x.to_lowercase()
-                            .split(' ')
-                            .skip_while(|x| x == &"the")
-                            .collect()
-                    })
-                    .collect()
-            };
-
-            let a = sanitize_artists_name(a);
-            let b = sanitize_artists_name(b);
-
-            a.cmp(&b)
-        }
-
-        let mut c = self.content.write().unwrap();
-
-        c.sort_by(|a, b| match (a.track(), b.track()) {
-            (Some(a), Some(b)) => match (key, direction) {
-                (SortKey::Title, SortDirection::Ascending) => {
-                    a.title.to_lowercase().cmp(&b.title.to_lowercase())
-                }
-                (SortKey::Title, SortDirection::Descending) => {
-                    b.title.to_lowercase().cmp(&a.title.to_lowercase())
-                }
-                (SortKey::Duration, SortDirection::Ascending) => a.duration.cmp(&b.duration),
-                (SortKey::Duration, SortDirection::Descending) => b.duration.cmp(&a.duration),
-                (SortKey::Album, SortDirection::Ascending) => a
-                    .album
-                    .map(|x| x.to_lowercase())
-                    .cmp(&b.album.map(|x| x.to_lowercase())),
-                (SortKey::Album, SortDirection::Descending) => b
-                    .album
-                    .map(|x| x.to_lowercase())
-                    .cmp(&a.album.map(|x| x.to_lowercase())),
-                (SortKey::Added, SortDirection::Ascending) => a.added_at.cmp(&b.added_at),
-                (SortKey::Added, SortDirection::Descending) => b.added_at.cmp(&a.added_at),
-                (SortKey::Artist, SortDirection::Ascending) => {
-                    compare_artists(a.artists, b.artists)
-                }
-                (SortKey::Artist, SortDirection::Descending) => {
-                    compare_artists(b.artists, a.artists)
-                }
-            },
-            _ => std::cmp::Ordering::Equal,
-        })
-    }
 }
 
 impl<I: ListItem> View for ListView<I> {
@@ -276,7 +158,7 @@ impl<I: ListItem> View for ListView<I> {
 
         self.scrollbar.draw(printer, |printer, i| {
             // draw paginator after content
-            if i == content.len() {
+            if i == content.len() && self.can_paginate() {
                 let style = ColorStyle::secondary();
 
                 let max = self.pagination.max_content().unwrap();
@@ -284,11 +166,13 @@ impl<I: ListItem> View for ListView<I> {
                 printer.with_color(style, |printer| {
                     printer.print((0, 0), &buf);
                 });
-            } else {
+            } else if i < content.len() {
                 let item = &content[i];
+                let currently_playing = item.is_playing(self.queue.clone())
+                    && self.queue.get_current_index() == Some(i);
 
                 let style = if self.selected == i {
-                    let fg = if item.is_playing(self.queue.clone()) {
+                    let fg = if currently_playing {
                         *printer.theme.palette.custom("playing_selected").unwrap()
                     } else {
                         PaletteColor::Tertiary.resolve(&printer.theme.palette)
@@ -297,7 +181,7 @@ impl<I: ListItem> View for ListView<I> {
                         ColorType::Color(fg),
                         ColorType::Palette(PaletteColor::Highlight),
                     )
-                } else if item.is_playing(self.queue.clone()) {
+                } else if currently_playing {
                     ColorStyle::new(
                         ColorType::Color(*printer.theme.palette.custom("playing").unwrap()),
                         ColorType::Color(*printer.theme.palette.custom("playing_bg").unwrap()),
@@ -331,7 +215,7 @@ impl<I: ListItem> View for ListView<I> {
 
                     for m in matches {
                         printer.with_color(matched_style, |printer| {
-                            printer.print((m.0, 0), &left[m.0..m.1]);
+                            printer.print((left[0..m.0].width(), 0), &left[m.0..m.1]);
                         });
                     }
                 }
@@ -595,7 +479,7 @@ impl<I: ListItem + Clone> ViewExt for ListView<I> {
                         return Ok(CommandResult::Consumed(None));
                     }
                     MoveMode::Down if self.selected == last_idx && self.can_paginate() => {
-                        self.pagination.call(&self.content);
+                        self.pagination.call(&self.content, self.library.clone());
                     }
                     _ => {}
                 }
@@ -633,15 +517,28 @@ impl<I: ListItem + Clone> ViewExt for ListView<I> {
                         GotoMode::Album => {
                             if let Some(album) = item.album(queue.clone()) {
                                 let view =
-                                    AlbumView::new(queue, library, &album).as_boxed_view_ext();
+                                    AlbumView::new(queue, library, &album).into_boxed_view_ext();
                                 return Ok(CommandResult::View(view));
                             }
                         }
                         GotoMode::Artist => {
-                            if let Some(artist) = item.artist() {
-                                let view =
-                                    ArtistView::new(queue, library, &artist).as_boxed_view_ext();
-                                return Ok(CommandResult::View(view));
+                            if let Some(artists) = item.artists() {
+                                return match artists.len() {
+                                    0 => Ok(CommandResult::Consumed(None)),
+                                    1 => {
+                                        let view = ArtistView::new(queue, library, &artists[0])
+                                            .into_boxed_view_ext();
+                                        Ok(CommandResult::View(view))
+                                    }
+                                    _ => {
+                                        let dialog = ContextMenu::select_artist_dialog(
+                                            library, queue, artists,
+                                        );
+                                        _s.add_layer(dialog);
+
+                                        Ok(CommandResult::Consumed(None))
+                                    }
+                                };
                             }
                         }
                     }
@@ -659,32 +556,28 @@ impl<I: ListItem + Clone> ViewExt for ListView<I> {
 
                 let spotify = self.queue.get_spotify();
 
-                let re =
-                    Regex::new(r"https?://open\.spotify\.com/(user/[^/]+/)?(\S+)/(\S+)(\?si=\S+)?")
-                        .unwrap();
-                let captures = re.captures(&url);
+                let url = SpotifyUrl::from_url(&url);
 
-                if let Some(captures) = captures {
-                    let target: Option<Box<dyn ListItem>> = match &captures[2] {
-                        "track" => spotify
-                            .track(&captures[3])
+                if let Some(url) = url {
+                    let target: Option<Box<dyn ListItem>> = match url.uri_type {
+                        UriType::Track => spotify
+                            .track(&url.id)
                             .map(|track| Track::from(&track).as_listitem()),
-                        "album" => spotify
-                            .album(&captures[3])
+                        UriType::Album => spotify
+                            .album(&url.id)
                             .map(|album| Album::from(&album).as_listitem()),
-                        "playlist" => spotify
-                            .playlist(&captures[3])
+                        UriType::Playlist => spotify
+                            .playlist(&url.id)
                             .map(|playlist| Playlist::from(&playlist).as_listitem()),
-                        "artist" => spotify
-                            .artist(&captures[3])
+                        UriType::Artist => spotify
+                            .artist(&url.id)
                             .map(|artist| Artist::from(&artist).as_listitem()),
-                        "episode" => spotify
-                            .episode(&captures[3])
+                        UriType::Episode => spotify
+                            .episode(&url.id)
                             .map(|episode| Episode::from(&episode).as_listitem()),
-                        "show" => spotify
-                            .get_show(&captures[3])
+                        UriType::Show => spotify
+                            .get_show(&url.id)
                             .map(|show| Show::from(&show).as_listitem()),
-                        _ => None,
                     };
 
                     let queue = self.queue.clone();

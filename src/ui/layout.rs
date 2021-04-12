@@ -17,14 +17,9 @@ use crate::commands::CommandResult;
 use crate::events;
 use crate::traits::{IntoBoxedViewExt, ViewExt};
 
-struct Screen {
-    title: String,
-    view: Box<dyn ViewExt>,
-}
-
 pub struct Layout {
-    views: HashMap<String, Screen>,
-    stack: Vec<Screen>,
+    screens: HashMap<String, Box<dyn ViewExt>>,
+    stack: HashMap<String, Vec<Box<dyn ViewExt>>>,
     statusbar: Box<dyn View>,
     focus: Option<String>,
     pub cmdline: EditView,
@@ -45,9 +40,9 @@ impl Layout {
         );
 
         Layout {
-            views: HashMap::new(),
-            stack: Vec::new(),
-            statusbar: status.as_boxed_view(),
+            screens: HashMap::new(),
+            stack: HashMap::new(),
+            statusbar: status.into_boxed_view(),
             focus: None,
             cmdline: EditView::new().filler(" ").style(style),
             cmdline_focus: false,
@@ -74,27 +69,31 @@ impl Layout {
         }
     }
 
-    pub fn add_view<S: Into<String>, T: IntoBoxedViewExt>(&mut self, id: S, view: T, title: S) {
+    pub fn add_screen<S: Into<String>, T: IntoBoxedViewExt>(&mut self, id: S, view: T) {
+        if let Some(view) = self.get_top_view() {
+            view.on_leave();
+        }
+
         let s = id.into();
-        let screen = Screen {
-            title: title.into(),
-            view: view.as_boxed_view_ext(),
-        };
-        self.views.insert(s.clone(), screen);
+        self.screens.insert(s.clone(), view.into_boxed_view_ext());
+        self.stack.insert(s.clone(), Vec::new());
         self.focus = Some(s);
     }
 
-    pub fn view<S: Into<String>, T: IntoBoxedViewExt>(mut self, id: S, view: T, title: S) -> Self {
-        (&mut self).add_view(id, view, title);
+    pub fn screen<S: Into<String>, T: IntoBoxedViewExt>(mut self, id: S, view: T) -> Self {
+        (&mut self).add_screen(id, view);
         self
     }
 
-    pub fn set_view<S: Into<String>>(&mut self, id: S) {
+    pub fn set_screen<S: Into<String>>(&mut self, id: S) {
+        if let Some(view) = self.get_top_view() {
+            view.on_leave();
+        }
+
         let s = id.into();
         self.focus = Some(s);
         self.cmdline_focus = false;
         self.screenchange = true;
-        self.stack.clear();
 
         // trigger a redraw
         self.ev.trigger();
@@ -122,35 +121,65 @@ impl Layout {
     }
 
     pub fn push_view(&mut self, view: Box<dyn ViewExt>) {
-        let title = view.title();
-        let screen = Screen { title, view };
+        if let Some(view) = self.get_top_view() {
+            view.on_leave();
+        }
 
-        self.stack.push(screen);
+        if let Some(stack) = self.get_focussed_stack_mut() {
+            stack.push(view)
+        }
     }
 
     pub fn pop_view(&mut self) {
-        self.stack.pop();
-    }
-
-    fn get_current_screen(&self) -> Option<&Screen> {
-        if !self.stack.is_empty() {
-            return self.stack.last();
+        if let Some(view) = self.get_top_view() {
+            view.on_leave();
         }
 
-        if let Some(id) = self.focus.as_ref() {
-            self.views.get(id)
+        self.get_focussed_stack_mut().map(|stack| stack.pop());
+    }
+
+    fn get_current_screen(&self) -> Option<&Box<dyn ViewExt>> {
+        self.focus
+            .as_ref()
+            .and_then(|focus| self.screens.get(focus))
+    }
+
+    fn get_focussed_stack_mut(&mut self) -> Option<&mut Vec<Box<dyn ViewExt>>> {
+        let focus = self.focus.clone();
+        if let Some(focus) = &focus {
+            self.stack.get_mut(focus)
         } else {
             None
         }
     }
 
-    fn get_current_screen_mut(&mut self) -> Option<&mut Screen> {
-        if !self.stack.is_empty() {
-            return self.stack.last_mut();
-        }
+    fn get_focussed_stack(&self) -> Option<&Vec<Box<dyn ViewExt>>> {
+        self.focus.as_ref().and_then(|focus| self.stack.get(focus))
+    }
 
-        if let Some(id) = self.focus.as_ref() {
-            self.views.get_mut(id)
+    fn get_top_view(&self) -> Option<&Box<dyn ViewExt>> {
+        let focussed_stack = self.get_focussed_stack();
+        if focussed_stack.map(|s| s.len()).unwrap_or_default() > 0 {
+            focussed_stack.unwrap().last()
+        } else if let Some(id) = &self.focus {
+            self.screens.get(id)
+        } else {
+            None
+        }
+    }
+
+    fn get_current_view_mut(&mut self) -> Option<&mut Box<dyn ViewExt>> {
+        if let Some(focus) = &self.focus {
+            let last_view = self
+                .stack
+                .get_mut(focus)
+                .filter(|stack| !stack.is_empty())
+                .and_then(|stack| stack.last_mut());
+            if last_view.is_some() {
+                last_view
+            } else {
+                self.screens.get_mut(focus)
+            }
         } else {
             None
         }
@@ -167,15 +196,32 @@ impl View for Layout {
             cmdline_height += 1;
         }
 
-        if let Some(screen) = self.get_current_screen() {
-            // screen title
-            printer.with_color(ColorStyle::title_primary(), |printer| {
-                let offset = HAlign::Center.get_offset(screen.title.width(), printer.size.x);
-                printer.print((offset, 0), &screen.title);
+        let screen_title = self
+            .get_current_screen()
+            .map(|screen| screen.title())
+            .unwrap_or_default();
 
-                if !self.stack.is_empty() {
-                    printer.print((1, 0), "<");
-                }
+        if let Some(view) = self.get_top_view() {
+            // back button + title
+            if !self
+                .get_focussed_stack()
+                .map(|s| s.is_empty())
+                .unwrap_or(false)
+            {
+                printer.with_color(ColorStyle::title_secondary(), |printer| {
+                    printer.print((1, 0), &format!("< {}", screen_title));
+                });
+            }
+
+            // view title
+            printer.with_color(ColorStyle::title_primary(), |printer| {
+                let offset = HAlign::Center.get_offset(view.title().width(), printer.size.x);
+                printer.print((offset, 0), &view.title());
+            });
+
+            printer.with_color(ColorStyle::secondary(), |printer| {
+                let offset = HAlign::Right.get_offset(view.title_sub().width(), printer.size.x);
+                printer.print((offset, 0), &view.title_sub());
             });
 
             // screen content
@@ -183,7 +229,7 @@ impl View for Layout {
                 .offset((0, 1))
                 .cropped((printer.size.x, printer.size.y - 3 - cmdline_height))
                 .focused(true);
-            screen.view.draw(printer);
+            view.draw(printer);
         }
 
         self.statusbar
@@ -220,8 +266,8 @@ impl View for Layout {
 
         self.cmdline.layout(Vec2::new(size.x, 1));
 
-        if let Some(screen) = self.get_current_screen_mut() {
-            screen.view.layout(Vec2::new(size.x, size.y - 3));
+        if let Some(view) = self.get_current_view_mut() {
+            view.layout(Vec2::new(size.x, size.y - 3));
         }
 
         // the focus view has changed, let the views know so they can redraw
@@ -247,9 +293,8 @@ impl View for Layout {
             }
 
             if position.y < self.last_size.y.saturating_sub(2 + cmdline_height) {
-                if let Some(ref id) = self.focus {
-                    let screen = self.views.get_mut(id).unwrap();
-                    screen.view.on_event(event);
+                if let Some(view) = self.get_current_view_mut() {
+                    view.on_event(event);
                 }
             } else if position.y < self.last_size.y - cmdline_height {
                 self.statusbar.on_event(
@@ -264,16 +309,16 @@ impl View for Layout {
             return self.cmdline.on_event(event);
         }
 
-        if let Some(screen) = self.get_current_screen_mut() {
-            screen.view.on_event(event)
+        if let Some(view) = self.get_current_view_mut() {
+            view.on_event(event)
         } else {
             EventResult::Ignored
         }
     }
 
     fn call_on_any<'a>(&mut self, s: &Selector, c: AnyCb<'a>) {
-        if let Some(screen) = self.get_current_screen_mut() {
-            screen.view.call_on_any(s, c);
+        if let Some(view) = self.get_current_view_mut() {
+            view.call_on_any(s, c);
         }
     }
 
@@ -282,8 +327,8 @@ impl View for Layout {
             return self.cmdline.take_focus(source);
         }
 
-        if let Some(screen) = self.get_current_screen_mut() {
-            screen.view.take_focus(source)
+        if let Some(view) = self.get_current_view_mut() {
+            view.take_focus(source)
         } else {
             false
         }
@@ -293,17 +338,20 @@ impl View for Layout {
 impl ViewExt for Layout {
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
         match cmd {
-            Command::Search(_) => {
-                self.set_view("search");
-                self.get_current_screen_mut()
-                    .map(|search| search.view.on_command(s, cmd));
-                Ok(CommandResult::Consumed(None))
-            }
             Command::Focus(view) => {
-                if self.views.keys().any(|k| k == view) {
-                    self.set_view(view.clone());
-                    let screen = self.views.get_mut(view).unwrap();
-                    screen.view.on_command(s, cmd)?;
+                // Clear search results and return to search bar
+                // If trying to focus search screen while already on it
+                let search_view_name = "search";
+                if view == search_view_name && self.focus == Some(search_view_name.into()) {
+                    if let Some(stack) = self.stack.get_mut(search_view_name) {
+                        stack.clear();
+                    }
+                }
+
+                if self.screens.keys().any(|k| k == view) {
+                    self.set_screen(view.clone());
+                    let screen = self.screens.get_mut(view).unwrap();
+                    screen.on_command(s, cmd)?;
                 }
 
                 Ok(CommandResult::Consumed(None))
@@ -313,8 +361,8 @@ impl ViewExt for Layout {
                 Ok(CommandResult::Consumed(None))
             }
             _ => {
-                if let Some(screen) = self.get_current_screen_mut() {
-                    screen.view.on_command(s, cmd)
+                if let Some(view) = self.get_current_view_mut() {
+                    view.on_command(s, cmd)
                 } else {
                     Ok(CommandResult::Ignored)
                 }

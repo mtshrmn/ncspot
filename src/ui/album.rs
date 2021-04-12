@@ -22,7 +22,7 @@ impl AlbumView {
     pub fn new(queue: Arc<Queue>, library: Arc<Library>, album: &Album) -> Self {
         let mut album = album.clone();
 
-        album.load_tracks(queue.get_spotify());
+        album.load_all_tracks(queue.get_spotify());
 
         let tracks = if let Some(t) = album.tracks.as_ref() {
             t.clone()
@@ -64,6 +64,17 @@ impl ViewWrapper for AlbumView {
 impl ViewExt for AlbumView {
     fn title(&self) -> String {
         format!("{} ({})", self.album.title, self.album.year)
+    }
+
+    fn title_sub(&self) -> String {
+        if let Some(tracks) = &self.album.tracks {
+            let duration_secs: u64 = tracks.iter().map(|t| t.duration as u64 / 1000).sum();
+            let duration = std::time::Duration::from_secs(duration_secs);
+            let duration_str = crate::utils::format_duration(&duration);
+            format!("{} tracks, {}", tracks.len(), duration_str)
+        } else {
+            "".to_string()
+        }
     }
 
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {

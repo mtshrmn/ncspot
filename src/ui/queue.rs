@@ -67,7 +67,7 @@ impl QueueView {
         let mut list_select: SelectView<Option<String>> = SelectView::new().autojump();
         list_select.add_item("[Create new]", None);
 
-        for list in library.items().iter() {
+        for list in library.playlists().iter() {
             list_select.add_item(list.name.clone(), Some(list.id.clone()));
         }
 
@@ -89,6 +89,33 @@ impl ViewWrapper for QueueView {
 }
 
 impl ViewExt for QueueView {
+    fn title(&self) -> String {
+        "Queue".to_string()
+    }
+
+    fn title_sub(&self) -> String {
+        let track_count = self.queue.len();
+        let duration_secs: u64 = self
+            .queue
+            .queue
+            .read()
+            .unwrap()
+            .iter()
+            .map(|p| p.duration() as u64 / 1000)
+            .sum();
+
+        if duration_secs > 0 {
+            let duration = std::time::Duration::from_secs(duration_secs);
+            format!(
+                "{} tracks, {}",
+                track_count,
+                crate::utils::format_duration(&duration)
+            )
+        } else {
+            "".to_string()
+        }
+    }
+
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
         match cmd {
             Command::Play => {

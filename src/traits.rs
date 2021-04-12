@@ -26,7 +26,7 @@ pub trait ListItem: Sync + Send + 'static {
     fn save(&mut self, library: Arc<Library>);
     fn unsave(&mut self, library: Arc<Library>);
     fn open(&self, queue: Arc<Queue>, library: Arc<Library>) -> Option<Box<dyn ViewExt>>;
-    fn open_recommentations(
+    fn open_recommendations(
         &self,
         _queue: Arc<Queue>,
         _library: Arc<Library>,
@@ -39,7 +39,7 @@ pub trait ListItem: Sync + Send + 'static {
         None
     }
 
-    fn artist(&self) -> Option<Artist> {
+    fn artists(&self) -> Option<Vec<Artist>> {
         None
     }
 
@@ -55,23 +55,41 @@ pub trait ViewExt: View {
         "".into()
     }
 
+    fn title_sub(&self) -> String {
+        "".into()
+    }
+
+    fn on_leave(&self) {}
+
     fn on_command(&mut self, _s: &mut Cursive, _cmd: &Command) -> Result<CommandResult, String> {
         Ok(CommandResult::Ignored)
     }
 }
 
 impl<V: ViewExt> ViewExt for NamedView<V> {
+    fn title(&self) -> String {
+        self.with_view(|v| v.title()).unwrap_or_default()
+    }
+
+    fn title_sub(&self) -> String {
+        self.with_view(|v| v.title_sub()).unwrap_or_default()
+    }
+
+    fn on_leave(&self) {
+        self.with_view(|v| v.on_leave());
+    }
+
     fn on_command(&mut self, s: &mut Cursive, cmd: &Command) -> Result<CommandResult, String> {
         self.with_view_mut(move |v| v.on_command(s, cmd)).unwrap()
     }
 }
 
 pub trait IntoBoxedViewExt {
-    fn as_boxed_view_ext(self) -> Box<dyn ViewExt>;
+    fn into_boxed_view_ext(self) -> Box<dyn ViewExt>;
 }
 
 impl<V: ViewExt> IntoBoxedViewExt for V {
-    fn as_boxed_view_ext(self) -> Box<dyn ViewExt> {
+    fn into_boxed_view_ext(self) -> Box<dyn ViewExt> {
         Box::new(self)
     }
 }

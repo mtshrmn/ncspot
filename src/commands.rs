@@ -3,13 +3,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::config::Config;
+use crate::events::EventManager;
 use crate::library::Library;
 use crate::queue::{Queue, RepeatSetting};
 use crate::spotify::{Spotify, VOLUME_PERCENT};
-use crate::traits::ViewExt;
+use crate::traits::{IntoBoxedViewExt, ViewExt};
 use crate::ui::contextmenu::ContextMenu;
 use crate::ui::help::HelpView;
 use crate::ui::layout::Layout;
+use crate::ui::modal::Modal;
+use crate::ui::search_results::SearchResultsView;
 use crate::UserData;
 use crate::{
     command::{
@@ -20,6 +23,7 @@ use crate::{
 };
 use cursive::event::{Event, Key};
 use cursive::traits::View;
+use cursive::views::Dialog;
 use cursive::Cursive;
 use std::cell::RefCell;
 
@@ -33,18 +37,20 @@ pub enum CommandResult {
 pub struct CommandManager {
     aliases: HashMap<String, String>,
     bindings: RefCell<HashMap<String, Command>>,
-    spotify: Arc<Spotify>,
+    spotify: Spotify,
     queue: Arc<Queue>,
     library: Arc<Library>,
     config: Arc<Config>,
+    events: EventManager,
 }
 
 impl CommandManager {
     pub fn new(
-        spotify: Arc<Spotify>,
+        spotify: Spotify,
         queue: Arc<Queue>,
         library: Arc<Library>,
         config: Arc<Config>,
+        events: EventManager,
     ) -> CommandManager {
         let bindings = RefCell::new(Self::get_bindings(config.clone()));
         CommandManager {
@@ -54,6 +60,7 @@ impl CommandManager {
             queue,
             library,
             config,
+            events,
         }
     }
 
@@ -99,6 +106,19 @@ impl CommandManager {
         match cmd {
             Command::Noop => Ok(None),
             Command::Quit => {
+                let queue = self.queue.queue.read().expect("can't readlock queue");
+                self.config.with_state_mut(move |mut s| {
+                    debug!(
+                        "saving state, {} items, current track: {:?}",
+                        queue.len(),
+                        self.queue.get_current_index()
+                    );
+                    s.queuestate.queue = queue.clone();
+                    s.queuestate.random_order = self.queue.get_random_order();
+                    s.queuestate.current_track = self.queue.get_current_index();
+                    s.queuestate.track_progress = self.spotify.get_current_progress();
+                });
+                self.config.save_state();
                 s.quit();
                 Ok(None)
             }
@@ -119,7 +139,14 @@ impl CommandManager {
                 Ok(None)
             }
             Command::Clear => {
-                self.queue.clear();
+                let queue = self.queue.clone();
+                let confirmation = Dialog::text("Clear queue?")
+                    .button("Yes", move |s| {
+                        s.pop_layer();
+                        queue.clear()
+                    })
+                    .dismiss_button("No");
+                s.add_layer(Modal::new(confirmation));
                 Ok(None)
             }
             Command::UpdateLibrary => {
@@ -193,6 +220,35 @@ impl CommandManager {
                     Some(_) => self.library.update_library(),
                     None => error!("could not create playlist {}", name),
                 }
+                Ok(None)
+            }
+            Command::Search(term) => {
+                let view = if !term.is_empty() {
+                    Some(SearchResultsView::new(
+                        term.clone(),
+                        self.events.clone(),
+                        self.queue.clone(),
+                        self.library.clone(),
+                    ))
+                } else {
+                    None
+                };
+                s.call_on_name("main", |v: &mut Layout| {
+                    v.set_screen("search");
+                    if let Some(results) = view {
+                        v.push_view(results.into_boxed_view_ext())
+                    }
+                });
+                Ok(None)
+            }
+            Command::Logout => {
+                self.spotify.shutdown();
+
+                let mut credentials_path = crate::config::cache_path("librespot");
+                credentials_path.push("credentials.json");
+                std::fs::remove_file(credentials_path).unwrap();
+
+                s.quit();
                 Ok(None)
             }
             Command::Jump(_)
@@ -326,6 +382,8 @@ impl CommandManager {
         kb.insert("F1".into(), Command::Focus("queue".into()));
         kb.insert("F2".into(), Command::Focus("search".into()));
         kb.insert("F3".into(), Command::Focus("library".into()));
+        #[cfg(feature = "cover")]
+        kb.insert("F8".into(), Command::Focus("cover".into()));
         kb.insert("?".into(), Command::Help);
         kb.insert("Backspace".into(), Command::Back);
 

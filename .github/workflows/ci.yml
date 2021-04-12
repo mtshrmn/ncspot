@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: true
+      - name: Update APT package lists
+        run: sudo apt update
+      - name: Install dependencies
+        run: sudo apt install libpulse-dev libdbus-1-dev libncursesw5-dev  libxcb-shape0-dev libxcb-xfixes0-dev libnotify-dev
+      - name: Patch rspotify library
+        run: cd rspotify && git apply ../rspotify.patch
+      - uses: actions/cache@v2
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: cargo check
+        run: cargo check --verbose
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: cargo fmt
+        run: cargo fmt --all -- --check

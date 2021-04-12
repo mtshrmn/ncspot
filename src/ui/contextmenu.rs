@@ -4,7 +4,6 @@ use cursive::view::{Margins, ViewWrapper};
 use cursive::views::{Dialog, NamedView, ScrollView, SelectView};
 use cursive::Cursive;
 
-use crate::commands::CommandResult;
 use crate::library::Library;
 use crate::playable::Playable;
 use crate::queue::Queue;
@@ -14,6 +13,7 @@ use crate::track::Track;
 use crate::traits::{ListItem, ViewExt};
 use crate::ui::layout::Layout;
 use crate::ui::modal::Modal;
+use crate::{artist::Artist, commands::CommandResult};
 use crate::{
     command::{Command, MoveAmount, MoveMode},
     playlist::Playlist,
@@ -29,24 +29,29 @@ pub struct AddToPlaylistMenu {
     dialog: Modal<Dialog>,
 }
 
+pub struct SelectArtistMenu {
+    dialog: Modal<Dialog>,
+}
+
 enum ContextMenuAction {
     ShowItem(Box<dyn ListItem>),
+    SelectArtist(Vec<Artist>),
     ShareUrl(String),
     AddToPlaylist(Box<Track>),
-    ShowRecommentations(Box<dyn ListItem>),
+    ShowRecommendations(Box<dyn ListItem>),
     ToggleTrackSavedStatus(Box<Track>),
 }
 
 impl ContextMenu {
     pub fn add_track_dialog(
         library: Arc<Library>,
-        spotify: Arc<Spotify>,
+        spotify: Spotify,
         track: Track,
     ) -> NamedView<AddToPlaylistMenu> {
         let mut list_select: SelectView<Playlist> = SelectView::new();
         let current_user_id = library.user_id.as_ref().unwrap();
 
-        for list in library.items().iter() {
+        for list in library.playlists().iter() {
             if current_user_id == &list.owner_id || list.collaborative {
                 list_select.add_item(list.name.clone(), list.clone());
             }
@@ -94,6 +99,36 @@ impl ContextMenu {
         .with_name("addtrackmenu")
     }
 
+    pub fn select_artist_dialog(
+        library: Arc<Library>,
+        queue: Arc<Queue>,
+        artists: Vec<Artist>,
+    ) -> NamedView<SelectArtistMenu> {
+        let mut list_select = SelectView::<Artist>::new();
+
+        for artist in artists {
+            list_select.add_item(artist.name.clone(), artist);
+        }
+
+        list_select.set_on_submit(move |s, selected| {
+            if let Some(view) = selected.open(queue.clone(), library.clone()) {
+                s.call_on_name("main", move |v: &mut Layout| v.push_view(view));
+                s.pop_layer();
+            }
+        });
+
+        let dialog = Dialog::new()
+            .title("Select artist")
+            .dismiss_button("Cancel")
+            .padding(Margins::lrtb(1, 1, 1, 0))
+            .content(ScrollView::new(list_select.with_name("artist_select")));
+
+        SelectArtistMenu {
+            dialog: Modal::new_ext(dialog),
+        }
+        .with_name("selectartist")
+    }
+
     fn track_already_added() -> Dialog {
         Dialog::text("This track is already in your playlist")
             .title("Track already exists")
@@ -103,8 +138,16 @@ impl ContextMenu {
 
     pub fn new(item: &dyn ListItem, queue: Arc<Queue>, library: Arc<Library>) -> NamedView<Self> {
         let mut content: SelectView<ContextMenuAction> = SelectView::new();
-        if let Some(a) = item.artist() {
-            content.add_item("Show artist", ContextMenuAction::ShowItem(Box::new(a)));
+        if let Some(a) = item.artists() {
+            let action = match a.len() {
+                0 => None,
+                1 => Some(ContextMenuAction::ShowItem(Box::new(a[0].clone()))),
+                _ => Some(ContextMenuAction::SelectArtist(a)),
+            };
+
+            if let Some(a) = action {
+                content.add_item("Show artist", a)
+            }
         }
         if let Some(a) = item.album(queue.clone()) {
             content.add_item("Show album", ContextMenuAction::ShowItem(Box::new(a)));
@@ -120,7 +163,7 @@ impl ContextMenu {
             );
             content.add_item(
                 "Similar tracks",
-                ContextMenuAction::ShowRecommentations(Box::new(t.clone())),
+                ContextMenuAction::ShowRecommendations(Box::new(t.clone())),
             );
             content.add_item(
                 match library.is_saved_track(&Playable::Track(t.clone())) {
@@ -152,14 +195,18 @@ impl ContextMenu {
                         Self::add_track_dialog(library, queue.get_spotify(), *track.clone());
                     s.add_layer(dialog);
                 }
-                ContextMenuAction::ShowRecommentations(item) => {
-                    if let Some(view) = item.open_recommentations(queue, library) {
+                ContextMenuAction::ShowRecommendations(item) => {
+                    if let Some(view) = item.open_recommendations(queue, library) {
                         s.call_on_name("main", move |v: &mut Layout| v.push_view(view));
                     }
                 }
                 ContextMenuAction::ToggleTrackSavedStatus(track) => {
                     let mut track: Track = *track.clone();
                     track.toggle_saved(library);
+                }
+                ContextMenuAction::SelectArtist(artists) => {
+                    let dialog = Self::select_artist_dialog(library, queue, artists.clone());
+                    s.add_layer(dialog);
                 }
             }
         });
@@ -230,5 +277,9 @@ impl ViewWrapper for AddToPlaylistMenu {
 }
 
 impl ViewWrapper for ContextMenu {
+    wrap_impl!(self.dialog: Modal<Dialog>);
+}
+
+impl ViewWrapper for SelectArtistMenu {
     wrap_impl!(self.dialog: Modal<Dialog>);
 }

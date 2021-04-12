@@ -10,7 +10,7 @@ use crate::playlist::PlaylistType;
 use crate::queue::Queue;
 use crate::traits::ViewExt;
 use crate::ui::listview::ListView;
-use crate::ui::playlists::{PlaylistsView};
+use crate::ui::playlists::PlaylistsView;
 use crate::ui::tabview::TabView;
 
 pub struct LibraryView {

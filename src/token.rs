@@ -1,6 +1,6 @@
-use reqwest::Client;
-use reqwest::header::{COOKIE, HeaderMap, HeaderValue};
 use crate::config;
+use reqwest::header::{HeaderMap, HeaderValue, COOKIE};
+use reqwest::Client;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TokenInfo {
@@ -20,12 +20,17 @@ pub fn fetch_illegal_access_token() -> Option<TokenInfo> {
     let mut headers = HeaderMap::new();
     let path = config::config_path("cookie.txt");
     let mut contents = std::fs::read_to_string(path)
-        .map_err(|e| format!("unable to read: {}", e)).unwrap();
+        .map_err(|e| format!("unable to read: {}", e))
+        .unwrap();
     contents.pop(); // remove newline from the end
     debug!("found user cookies: \"{}\"", contents.clone());
     headers.insert(COOKIE, HeaderValue::from_str(contents.as_str()).unwrap());
 
-    let mut response = client.get("https://open.spotify.com/get_access_token").headers(headers).send().expect("send request failed");
+    let mut response = client
+        .get("https://open.spotify.com/get_access_token")
+        .headers(headers)
+        .send()
+        .expect("send request failed");
     if response.status().is_success() {
         let token_info: TokenInfo = response.json().unwrap();
         debug!("access_token is: {}", token_info.access_token);

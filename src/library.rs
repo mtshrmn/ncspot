@@ -211,15 +211,9 @@ impl Library {
             let t_foru = {
                 let library = library.clone();
                 thread::spawn(move || {
-                    library.load_cache(
-                        config::cache_path(CACHE_FORU),
-                        library.foru.clone(),
-                    );
+                    library.load_cache(config::cache_path(CACHE_FORU), library.foru.clone());
                     library.fetch_foru();
-                    library.save_cache(
-                        config::cache_path(CACHE_FORU),
-                        library.foru.clone(),
-                    );
+                    library.save_cache(config::cache_path(CACHE_FORU), library.foru.clone());
                 })
             };
 

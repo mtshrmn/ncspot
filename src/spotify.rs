@@ -10,17 +10,17 @@ use librespot_playback::audio_backend;
 use librespot_playback::config::Bitrate;
 use librespot_playback::player::Player;
 
+use rspotify::blocking::client::ApiError;
 use rspotify::blocking::client::Spotify as SpotifyAPI;
 use rspotify::model::album::{FullAlbum, SavedAlbum};
 use rspotify::model::artist::FullArtist;
+use rspotify::model::madeforyou::MadeForXHub;
 use rspotify::model::page::{CursorBasedPage, Page};
 use rspotify::model::playlist::FullPlaylist;
 use rspotify::model::search::SearchResult;
 use rspotify::model::track::{FullTrack, SavedTrack, SimplifiedTrack};
 use rspotify::model::user::PrivateUser;
-use rspotify::model::madeforyou::MadeForXHub;
-use rspotify::senum::{AlbumType, SearchType, Country};
-use rspotify::blocking::client::ApiError;
+use rspotify::senum::{AlbumType, Country, SearchType};
 
 use serde_json::{json, Map};
 
@@ -48,8 +48,8 @@ use crate::config;
 use crate::events::{Event, EventManager};
 use crate::playable::Playable;
 use crate::spotify_worker::{Worker, WorkerCommand};
-use crate::track::Track;
 use crate::token::fetch_illegal_access_token;
+use crate::track::Track;
 
 use crate::album::Album;
 use crate::episode::Episode;
@@ -531,13 +531,7 @@ impl Spotify {
 
     pub fn made_for_you(&self) -> Option<MadeForXHub> {
         self.api_with_retry(|api| {
-            api.made_for_x(
-                None,
-                20,
-                10,
-                Some(Country::Israel),
-                Some("en".to_string()),
-            )
+            api.made_for_x(None, 20, 10, Some(Country::Israel), Some("en".to_string()))
         })
     }
 

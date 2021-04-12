@@ -9,8 +9,8 @@ use rayon::prelude::*;
 use strum_macros::Display;
 
 use crate::playable::Playable;
-use crate::track::Track;
 use crate::spotify::Spotify;
+use crate::track::Track;
 use crate::{config::Config, spotify::PlayerEvent};
 
 #[derive(Display, Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
@@ -367,7 +367,8 @@ impl Queue {
         } else if self.cfg.values().autoplay.unwrap_or(false) {
             if let Some(current_track) = self.get_current() {
                 if let Some(id) = current_track.id() {
-                    let recommendations: Vec<Track> = self.spotify
+                    let recommendations: Vec<Track> = self
+                        .spotify
                         .recommendations(None, None, Some(vec![id.clone()]))
                         .map(|r| r.tracks)
                         .map(|tracks| {
@@ -378,7 +379,8 @@ impl Queue {
                                     None => None,
                                 })
                                 .collect()
-                        }).unwrap_or(Vec::new());
+                        })
+                        .unwrap_or(Vec::new());
 
                     let tracks: Vec<Playable> = recommendations
                         .iter()

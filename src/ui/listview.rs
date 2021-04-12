@@ -379,7 +379,7 @@ impl<I: ListItem + Clone> ViewExt for ListView<I> {
             Command::QueueAll => {
                 let index = self.get_selected_index();
                 self.queue_all_after(&index);
-            },
+            }
             Command::Save => {
                 let mut item = {
                     let content = self.content.read().unwrap();

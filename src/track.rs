@@ -2,6 +2,7 @@ use std::fmt;
 use std::sync::{Arc, RwLock};
 
 use chrono::{DateTime, Utc};
+use rayon::prelude::*;
 use rspotify::model::album::FullAlbum;
 use rspotify::model::track::{FullTrack, SavedTrack, SimplifiedTrack};
 
@@ -253,7 +254,16 @@ impl ListItem for Track {
             spotify
                 .recommendations(None, None, Some(vec![id.clone()]))
                 .map(|r| r.tracks)
-                .map(|tracks| tracks.iter().map(Track::from).collect())
+                .map(|tracks| {
+                    tracks
+                        .par_iter()
+                        .filter_map(|track| match track.id.as_ref() {
+                            Some(id) => spotify.track(id),
+                            None => None,
+                        })
+                        .collect()
+                })
+                .map(|tracks: Vec<FullTrack>| tracks.iter().map(Track::from).collect())
         } else {
             None
         };

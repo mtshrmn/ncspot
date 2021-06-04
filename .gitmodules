@@ -1,0 +1,3 @@
+[submodule "rspotify"]
+	path = rspotify
+	url = https://github.com/ramsayleung/rspotify.git

@@ -36,6 +36,7 @@ mod spotify;
 mod spotify_url;
 mod spotify_worker;
 mod theme;
+mod token;
 mod track;
 mod traits;
 mod ui;

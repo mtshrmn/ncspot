@@ -37,6 +37,14 @@ impl Playable {
         }
     }
 
+    #[cfg(feature = "notify")]
+    pub fn cover_url_str(&self) -> String {
+        match self.cover_url() {
+            Some(cover) => cover.clone(),
+            _ => String::from(""),
+        }
+    }
+
     pub fn duration(&self) -> u32 {
         match self {
             Playable::Track(track) => track.duration,
@@ -55,6 +63,22 @@ impl Playable {
         match self {
             Playable::Track(track) => track.as_listitem(),
             Playable::Episode(episode) => episode.as_listitem(),
+        }
+    }
+
+    #[cfg(feature = "notify")]
+    pub fn title(&self) -> String {
+        match self {
+            Playable::Track(track) => track.title.clone(),
+            Playable::Episode(episode) => episode.name.clone(),
+        }
+    }
+
+    #[cfg(feature = "notify")]
+    pub fn artist(&self) -> String {
+        match self {
+            Playable::Track(track) => track.artists.clone().join(", "),
+            Playable::Episode(_) => String::from(""),
         }
     }
 }

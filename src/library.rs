@@ -15,7 +15,7 @@ use crate::config;
 use crate::config::Config;
 use crate::events::EventManager;
 use crate::playable::Playable;
-use crate::playlist::Playlist;
+use crate::playlist::{Playlist, PlaylistType};
 use crate::show::Show;
 use crate::spotify::Spotify;
 use crate::track::Track;
@@ -24,6 +24,7 @@ const CACHE_TRACKS: &str = "tracks.db";
 const CACHE_ALBUMS: &str = "albums.db";
 const CACHE_ARTISTS: &str = "artists.db";
 const CACHE_PLAYLISTS: &str = "playlists.db";
+const CACHE_FORU: &str = "foru.db";
 
 #[derive(Clone)]
 pub struct Library {
@@ -32,6 +33,7 @@ pub struct Library {
     pub artists: Arc<RwLock<Vec<Artist>>>,
     pub playlists: Arc<RwLock<Vec<Playlist>>>,
     pub shows: Arc<RwLock<Vec<Show>>>,
+    pub foru: Arc<RwLock<Vec<Playlist>>>,
     pub is_done: Arc<RwLock<bool>>,
     pub user_id: Option<String>,
     pub display_name: Option<String>,
@@ -52,6 +54,7 @@ impl Library {
             artists: Arc::new(RwLock::new(Vec::new())),
             playlists: Arc::new(RwLock::new(Vec::new())),
             shows: Arc::new(RwLock::new(Vec::new())),
+            foru: Arc::new(RwLock::new(Vec::new())),
             is_done: Arc::new(RwLock::new(false)),
             user_id,
             display_name,
@@ -108,8 +111,11 @@ impl Library {
             .unwrap_or(true)
     }
 
-    fn append_or_update(&self, updated: &Playlist) -> usize {
-        let mut store = self.playlists.write().expect("can't writelock playlists");
+    fn append_or_update(&self, p_type: PlaylistType, updated: &Playlist) -> usize {
+        let mut store = match p_type {
+            PlaylistType::Library => self.playlists.write().expect("can't writelock playlists"),
+            PlaylistType::ForYou => self.foru.write().expect("can't writelock foru"),
+        };
         for (index, local) in store.iter_mut().enumerate() {
             if local.id == updated.id {
                 *local = updated.clone();
@@ -203,6 +209,15 @@ impl Library {
                 })
             };
 
+            let t_foru = {
+                let library = library.clone();
+                thread::spawn(move || {
+                    library.load_cache(config::cache_path(CACHE_FORU), library.foru.clone());
+                    library.fetch_foru();
+                    library.save_cache(config::cache_path(CACHE_FORU), library.foru.clone());
+                })
+            };
+
             let t_shows = {
                 let library = library.clone();
                 thread::spawn(move || {
@@ -219,6 +234,7 @@ impl Library {
             t_albums.join().unwrap();
             t_playlists.join().unwrap();
             t_shows.join().unwrap();
+            t_foru.join().unwrap();
 
             let mut is_done = library.is_done.write().unwrap();
             *is_done = true;
@@ -250,6 +266,47 @@ impl Library {
         *self.shows.write().unwrap() = saved_shows;
     }
 
+    fn fetch_foru(&self) {
+        debug!("loading foru");
+        let mut stale_lists = self.foru.read().unwrap().clone();
+        let mut foru_order = Vec::new();
+
+        let lists_result = self.spotify.made_for_you();
+        if let Some(ref lists) = lists_result.clone() {
+            for remote in lists.content.items.iter() {
+                for (p_index, p_remote) in remote.content.items.iter().enumerate() {
+                    foru_order.push(p_remote.id.clone());
+
+                    if let Some(index) = stale_lists.iter().position(|x| x.id == p_remote.id) {
+                        stale_lists.remove(index);
+                    }
+
+                    if self.needs_download(&p_remote.into()) {
+                        info!("updating playlist {} (index: {})", p_remote.name, p_index);
+                        let mut playlist: Playlist = p_remote.into();
+                        playlist.load_tracks(self.spotify.clone());
+                        self.append_or_update(PlaylistType::ForYou, &playlist);
+                        // trigger redraw
+                        self.ev.trigger();
+                    }
+                }
+            }
+        }
+
+        for stale in stale_lists {
+            let index = self
+                .foru
+                .read()
+                .unwrap()
+                .iter()
+                .position(|x| x.id == stale.id);
+            if let Some(index) = index {
+                debug!("removing stale list: {:?}", stale.name);
+                self.foru.write().unwrap().remove(index);
+            }
+        }
+    }
+
     fn fetch_playlists(&self) {
         debug!("loading playlists");
         let mut stale_lists = self.playlists.read().unwrap().clone();
@@ -271,7 +328,7 @@ impl Library {
                     let mut playlist: Playlist = remote.clone();
                     playlist.tracks = None;
                     playlist.load_tracks(self.spotify.clone());
-                    self.append_or_update(&playlist);
+                    self.append_or_update(PlaylistType::Library, &playlist);
                     // trigger redraw
                     self.ev.trigger();
                 }

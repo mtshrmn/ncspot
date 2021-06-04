@@ -1,0 +1,129 @@
+diff --git a/src/blocking/client.rs b/src/blocking/client.rs
+index c126f9d..bdc32c0 100644
+--- a/src/blocking/client.rs
++++ b/src/blocking/client.rs
+@@ -33,6 +33,7 @@ use crate::model::search::SearchResult;
+ use crate::model::show::{
+     FullEpisode, FullShow, SeveralEpisodes, SeversalSimplifiedShows, Show, SimplifiedEpisode,
+ };
++use crate::model::madeforyou::MadeForXHub;
+ use crate::model::track::{FullTrack, FullTracks, SavedTrack, SimplifiedTrack};
+ use crate::model::user::{PrivateUser, PublicUser};
+ use crate::senum::{
+@@ -1448,6 +1449,45 @@ impl Spotify {
+         let result = self.get(&url, &mut params)?;
+         self.convert_result::<Recommendations>(&result)
+     }
++
++    /// Get made for you hub
++    /// This isn't a documented endpoint so everything here is guesswork.
++    /// TODO: add proper documentation.
++    pub fn made_for_x<C: Into<Option<u32>>, L: Into<Option<u32>>>(
++        &self,
++        timestamp: Option<DateTime<Utc>>,
++        content_limit: C,
++        limit: L,
++        country: Option<Country>,
++        locale: Option<String>,
++    ) -> Result<MadeForXHub, failure::Error> {
++        let mut params = HashMap::new();
++        params.insert("content_limit".to_owned(), content_limit.into().unwrap_or(20).to_string());
++        params.insert("limit".to_owned(), limit.into().unwrap_or(20).to_string());
++
++        if let Some(_locale) = locale {
++            params.insert("locale".to_owned(), _locale);
++        }
++
++        if let Some(_country) = country {
++            params.insert("country".to_owned(), _country.as_str().to_owned());
++        }
++
++        if let Some(_timestamp) = timestamp {
++            params.insert("timestamp".to_owned(), _timestamp.to_rfc3339());
++
++        }
++
++        // stuff that i think should be hardcoded.
++        params.insert("platform".to_owned(), "web".to_owned());
++        params.insert("market".to_owned(), "from_token".to_owned());
++        params.insert("types".to_owned(), "album,playlist,artist,show,station".to_owned());
++        params.insert("image_style".to_owned(), "gradient_overlay".to_owned());
++
++        let result = self.get("views/made-for-x-hub", &mut params)?;
++        self.convert_result::<MadeForXHub>(&result)
++    }
++
+     ///[get audio features](https://developer.spotify.com/web-api/get-audio-features/)
+     ///Get audio features for a track
+     ///- track - track URI, URL or ID
+diff --git a/src/model/madeforyou.rs b/src/model/madeforyou.rs
+new file mode 100644
+index 0000000..24c231c
+--- /dev/null
++++ b/src/model/madeforyou.rs
+@@ -0,0 +1,25 @@
++// This is not documented and is all guessed from looking at the developer tools of my browser.
++
++use std::collections::HashMap;
++use super::playlist::SimplifiedPlaylist;
++use super::page::Page;
++use crate::senum::Type;
++
++#[derive(Clone, Debug, Serialize, Deserialize)]
++pub struct PlaylistGroup<T> {
++    pub content: Page<T>,
++    pub custom_fields:  HashMap<String, String>,
++    pub external_urls: Option<HashMap<String, String>>,
++    pub href: Option<String>,
++    pub id: Option<String>,
++    pub images: Vec<String>,
++    pub name: String,
++    pub rendering: String,
++    pub tag_line: Option<String>,
++    #[serde(rename = "type")]
++    pub _type: Type,
++}
++
++pub type MadeForXHub = PlaylistGroup<PlaylistGroup<SimplifiedPlaylist>>;
++
++
+diff --git a/src/model/mod.rs b/src/model/mod.rs
+index e54cb4d..021ddde 100644
+--- a/src/model/mod.rs
++++ b/src/model/mod.rs
+@@ -16,6 +16,7 @@ pub mod search;
+ pub mod show;
+ pub mod track;
+ pub mod user;
++pub mod madeforyou;
+ 
+ #[derive(Clone, Debug, Serialize, Deserialize)]
+ #[serde(untagged)]
+diff --git a/src/senum.rs b/src/senum.rs
+index c94c31c..705386e 100644
+--- a/src/senum.rs
++++ b/src/senum.rs
+@@ -87,6 +87,7 @@ pub enum Type {
+     User,
+     Show,
+     Episode,
++    View,
+ }
+ impl Type {
+     pub fn as_str(&self) -> &str {
+@@ -98,6 +99,7 @@ impl Type {
+             Type::User => "user",
+             Type::Show => "show",
+             Type::Episode => "episode",
++            Type::View => "view",
+         }
+     }
+ }
+@@ -112,6 +114,7 @@ impl FromStr for Type {
+             "user" => Ok(Type::User),
+             "show" => Ok(Type::Show),
+             "episode" => Ok(Type::Episode),
++            "view" => Ok(Type::View),
+             _ => Err(Error::new(ErrorKind::NoEnum(s.to_owned()))),
+         }
+     }

@@ -7,7 +7,7 @@ use cursive::Cursive;
 use crate::command::Command;
 use crate::commands::CommandResult;
 use crate::library::Library;
-use crate::playlist::Playlist;
+use crate::playlist::{Playlist, PlaylistType};
 use crate::queue::Queue;
 use crate::traits::ViewExt;
 use crate::ui::listview::ListView;
@@ -19,9 +19,14 @@ pub struct PlaylistsView {
 }
 
 impl PlaylistsView {
-    pub fn new(queue: Arc<Queue>, library: Arc<Library>) -> Self {
+    pub fn new(p_type: PlaylistType, queue: Arc<Queue>, library: Arc<Library>) -> Self {
+        let list = match p_type {
+            PlaylistType::Library => library.playlists.clone(),
+            PlaylistType::ForYou => library.foru.clone(),
+        };
+
         Self {
-            list: ListView::new(library.playlists.clone(), queue, library.clone()),
+            list: ListView::new(list, queue, library.clone()),
             library,
         }
     }

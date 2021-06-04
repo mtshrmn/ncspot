@@ -12,6 +12,11 @@ use crate::traits::{IntoBoxedViewExt, ListItem, ViewExt};
 use crate::ui::playlist::PlaylistView;
 use crate::{command::SortDirection, command::SortKey, library::Library};
 
+pub enum PlaylistType {
+    Library,
+    ForYou,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Playlist {
     pub id: String,

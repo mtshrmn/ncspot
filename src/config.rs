@@ -30,6 +30,7 @@ pub struct ConfigValues {
     pub notify: Option<bool>,
     pub bitrate: Option<u32>,
     pub album_column: Option<bool>,
+    pub autoplay: Option<bool>,
     pub gapless: Option<bool>,
     pub shuffle: Option<bool>,
     pub repeat: Option<queue::RepeatSetting>,

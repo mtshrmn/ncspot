@@ -11,16 +11,17 @@ use librespot_playback::audio_backend;
 use librespot_playback::config::Bitrate;
 use librespot_playback::player::Player;
 
+use rspotify::blocking::client::ApiError;
 use rspotify::blocking::client::Spotify as SpotifyAPI;
 use rspotify::model::album::{FullAlbum, SavedAlbum};
 use rspotify::model::artist::FullArtist;
+use rspotify::model::madeforyou::MadeForXHub;
 use rspotify::model::page::{CursorBasedPage, Page};
 use rspotify::model::playlist::FullPlaylist;
 use rspotify::model::search::SearchResult;
 use rspotify::model::track::{FullTrack, SavedTrack, SimplifiedTrack};
 use rspotify::model::user::PrivateUser;
-use rspotify::senum::{AlbumType, SearchType};
-use rspotify::{blocking::client::ApiError, senum::Country};
+use rspotify::senum::{AlbumType, Country, SearchType};
 
 use serde_json::{json, Map};
 
@@ -42,6 +43,7 @@ use crate::config;
 use crate::events::{Event, EventManager};
 use crate::playable::Playable;
 use crate::spotify_worker::{Worker, WorkerCommand};
+use crate::token::fetch_illegal_access_token;
 use crate::track::Track;
 
 use crate::album::Album;
@@ -304,7 +306,11 @@ impl Spotify {
 
         let (token_tx, token_rx) = oneshot::channel();
         self.send_worker(WorkerCommand::RequestToken(token_tx));
-        let token = futures::executor::block_on(token_rx).unwrap();
+        let mut token = futures::executor::block_on(token_rx).unwrap();
+
+        info!("attempting to fetch illegal access token");
+        token.access_token = fetch_illegal_access_token().unwrap().access_token;
+        info!("illegal acces token fetched successfully");
 
         // update token used by web api calls
         self.api.write().expect("can't writelock api").access_token = Some(token.access_token);
@@ -493,6 +499,12 @@ impl Spotify {
                 self.country,
                 &Map::new(),
             )
+        })
+    }
+
+    pub fn made_for_you(&self) -> Option<MadeForXHub> {
+        self.api_with_retry(|api| {
+            api.made_for_x(None, 20, 10, Some(Country::Israel), Some("en".to_string()))
         })
     }
 

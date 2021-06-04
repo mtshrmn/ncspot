@@ -1,15 +1,17 @@
 use std::cmp::Ordering;
 use std::sync::{Arc, RwLock};
 
-use log::{debug, error, info};
+use log::{debug, info};
 #[cfg(feature = "notify")]
-use notify_rust::Notification;
+use {gdk_pixbuf::Pixbuf, libnotify::Notification, std::fs::File, std::io::copy, tempdir::TempDir};
 
 use rand::prelude::*;
+use rayon::prelude::*;
 use strum_macros::Display;
 
 use crate::playable::Playable;
 use crate::spotify::Spotify;
+use crate::track::Track;
 use crate::{config::Config, spotify::PlayerEvent};
 
 #[derive(Display, Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
@@ -33,27 +35,37 @@ pub struct Queue {
     current_track: RwLock<Option<usize>>,
     spotify: Spotify,
     cfg: Arc<Config>,
+    #[cfg(feature = "notify")]
+    notification: Notification,
 }
+
+unsafe impl Send for Queue {}
+unsafe impl Sync for Queue {}
 
 impl Queue {
     pub fn new(spotify: Spotify, cfg: Arc<Config>) -> Queue {
         let state = cfg.state().queuestate.clone();
-        let queue = Queue {
+        #[cfg(feature = "notify")]
+        libnotify::init("Spotify").unwrap();
+
+        let q = Queue {
             queue: Arc::new(RwLock::new(state.queue)),
             spotify: spotify.clone(),
             current_track: RwLock::new(state.current_track),
             random_order: RwLock::new(state.random_order),
+            #[cfg(feature = "notify")]
+            notification: Notification::new("Playback Notification", None, None),
             cfg,
         };
 
-        if let Some(playable) = queue.get_current() {
+        if let Some(playable) = q.get_current() {
             spotify.load(&playable, false, state.track_progress.as_millis() as u32);
             spotify.update_track();
             spotify.pause();
             spotify.seek(state.track_progress.as_millis() as u32);
         }
 
-        queue
+        q
     }
 
     pub fn next_index(&self) -> Option<usize> {
@@ -262,10 +274,47 @@ impl Queue {
             let mut current = self.current_track.write().unwrap();
             current.replace(index);
             self.spotify.update_track();
-            if self.cfg.values().notify.unwrap_or(false) {
-                #[cfg(feature = "notify")]
-                if let Err(e) = Notification::new().summary(&track.to_string()).show() {
-                    error!("error showing notification: {:?}", e);
+            #[cfg(feature = "notify")]
+            {
+                self.notification
+                    .update(&track.title()[..], &track.artist()[..], None)
+                    .unwrap();
+
+                let tmp_dir = TempDir::new("spotify_pic")
+                    .map_err(|_| "Unable to create temp dir".to_string())
+                    .unwrap();
+                let mut response = reqwest::get(&track.cover_url_str())
+                    .map_err(|_| "Unable to get image".to_string())
+                    .unwrap();
+                let file: String;
+                let mut dest = {
+                    let fname = response
+                        .url()
+                        .path_segments()
+                        .and_then(|segments| segments.last())
+                        .and_then(|name| if name.is_empty() { None } else { Some(name) })
+                        .unwrap_or("tmp.png");
+
+                    let fname = tmp_dir.path().join(fname).with_extension("png");
+                    file = fname.display().to_string();
+                    File::create(fname)
+                        .map_err(|_| "Couldn't create file".to_string())
+                        .unwrap()
+                };
+
+                copy(&mut response, &mut dest)
+                    .map_err(|_| "Unable to copy data".to_string())
+                    .unwrap();
+                let pixbuf = Pixbuf::new_from_file(&file)
+                    .map_err(|_| "Error creating pixbuf".to_string())
+                    .unwrap();
+
+                self.notification.set_image_from_pixbuf(&pixbuf);
+                if self.cfg.values().notify.unwrap_or(false) {
+                    let _ = self
+                        .notification
+                        .show()
+                        .map_err(|_| "Something went wrong".to_string());
                 }
             }
         }
@@ -295,7 +344,6 @@ impl Queue {
     }
 
     pub fn next(&self, manual: bool) {
-        let q = self.queue.read().unwrap();
         let current = *self.current_track.read().unwrap();
         let repeat = self.cfg.state().repeat;
 
@@ -308,13 +356,45 @@ impl Queue {
             if repeat == RepeatSetting::RepeatTrack && manual {
                 self.set_repeat(RepeatSetting::RepeatPlaylist);
             }
-        } else if repeat == RepeatSetting::RepeatPlaylist && q.len() > 0 {
+        } else if repeat == RepeatSetting::RepeatPlaylist && self.len() > 0 {
             let random_order = self.random_order.read().unwrap();
             self.play(
                 random_order.as_ref().map(|o| o[0]).unwrap_or(0),
                 false,
                 false,
             );
+        } else if self.cfg.values().autoplay.unwrap_or(false) {
+            if let Some(current_track) = self.get_current() {
+                if let Some(id) = current_track.id() {
+                    let recommendations: Vec<Track> = self
+                        .spotify
+                        .recommendations(None, None, Some(vec![id.clone()]))
+                        .map(|r| r.tracks)
+                        .map(|tracks| {
+                            tracks
+                                .par_iter()
+                                .filter_map(|track| match track.id.as_ref() {
+                                    Some(id) => Some(Track::from(&self.spotify.track(id).unwrap())),
+                                    None => None,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or(Vec::new());
+
+                    let tracks: Vec<Playable> = recommendations
+                        .iter()
+                        .map(|track| Playable::Track(track.clone()))
+                        .collect();
+
+                    self.append_next(tracks);
+                }
+            }
+
+            if let Some(index) = self.next_index() {
+                self.play(index, false, false);
+            } else {
+                self.spotify.stop();
+            }
         } else {
             self.spotify.stop();
         }
